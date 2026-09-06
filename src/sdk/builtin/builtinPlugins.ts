@@ -8,13 +8,23 @@ import { createMockMusicSourceAdapter } from '../../sources/adapters/mock'
 import {
   createSpotifyAdapter,
   createSpotifyLibraryProvider,
+  createSpotifySearchProvider,
   getSpotifyAdapter,
 } from '../../sources/adapters/spotify'
 import { createVKMusicAdapter } from '../../sources/adapters/vk-music'
-import { createYandexMusicAdapter } from '../../sources/adapters/yandex-music'
+import {
+  createYandexMusicAdapter,
+  createYandexLibraryProvider,
+  createYandexSearchProvider,
+  getYandexMusicAdapter,
+} from '../../sources/adapters/yandex-music'
 import { createZaycevAdapter } from '../../sources/adapters/zaycev'
 import { sourceRegistry } from '../../sources/registry'
-import type { ProviderCapabilities, ProviderPlugin } from '../types'
+import type {
+  ProviderCapabilities,
+  ProviderPlugin,
+  ProviderSupportLevel,
+} from '../types'
 
 function caps(
   partial: Partial<ProviderCapabilities>,
@@ -64,6 +74,8 @@ function definePlugin(options: {
   defaultPriority: number
   defaultEnabled?: boolean
   capabilities: ProviderCapabilities
+  supportLevel?: ProviderSupportLevel
+  supportDescription?: string
   factory: () => MusicSourceAdapter
 }): ProviderPlugin {
   return {
@@ -76,6 +88,8 @@ function definePlugin(options: {
       defaultPriority: options.defaultPriority,
       defaultEnabled: options.defaultEnabled ?? false,
       capabilities: options.capabilities,
+      supportLevel: options.supportLevel ?? 'official',
+      supportDescription: options.supportDescription,
     },
     createMusicSourceAdapter: () =>
       resolveAdapter(options.id, options.factory),
@@ -94,6 +108,7 @@ export const builtinProviderPlugins: ProviderPlugin[] = [
     defaultPriority: 0,
     defaultEnabled: true,
     icon: 'demo',
+    supportLevel: 'official',
     capabilities: caps({
       search: true,
       library: true,
@@ -110,6 +125,9 @@ export const builtinProviderPlugins: ProviderPlugin[] = [
       icon: 'spotify',
       defaultPriority: 10,
       defaultEnabled: false,
+      supportLevel: 'official',
+      supportDescription:
+        'Официальный Spotify Web API и Web Playback SDK.',
       capabilities: caps({
         search: true,
         library: true,
@@ -122,25 +140,44 @@ export const builtinProviderPlugins: ProviderPlugin[] = [
     createMusicSourceAdapter: () =>
       resolveAdapter('spotify', createSpotifyAdapter),
     createLibraryProvider: () => createSpotifyLibraryProvider(),
+    createSearchProvider: () => createSpotifySearchProvider(),
     createAuthenticationProvider: () =>
       getSpotifyAdapter().createAuthenticationProvider(),
   },
-  definePlugin({
-    id: 'yandex-music',
-    name: 'Яндекс Музыка',
-    defaultPriority: 20,
-    capabilities: caps({
-      search: true,
-      library: true,
-      streaming: true,
-      authentication: true,
-    }),
-    factory: createYandexMusicAdapter,
-  }),
+  {
+    manifest: {
+      id: 'yandex-music',
+      name: 'Яндекс Музыка',
+      version: '1.0.0',
+      icon: 'yandex',
+      defaultPriority: 20,
+      defaultEnabled: false,
+      supportLevel: 'experimental',
+      supportDescription:
+        'Использует внутренний API Яндекс Музыки. Работа не гарантируется после обновлений сервиса.',
+      capabilities: caps({
+        search: true,
+        library: true,
+        streaming: true,
+        artwork: true,
+        authentication: true,
+        previewPlayback: true,
+      }),
+    },
+    createMusicSourceAdapter: () =>
+      resolveAdapter('yandex-music', createYandexMusicAdapter),
+    createLibraryProvider: () => createYandexLibraryProvider(),
+    createSearchProvider: () => createYandexSearchProvider(),
+    createAuthenticationProvider: () =>
+      getYandexMusicAdapter().createAuthenticationProvider(),
+  },
   definePlugin({
     id: 'vk-music',
     name: 'VK Музыка',
     defaultPriority: 30,
+    supportLevel: 'experimental',
+    supportDescription:
+      'Заготовка. Полноценный API ещё не подключён.',
     capabilities: caps({
       search: true,
       library: true,
@@ -153,6 +190,7 @@ export const builtinProviderPlugins: ProviderPlugin[] = [
     id: 'zaycev',
     name: 'Zaycev.net',
     defaultPriority: 40,
+    supportLevel: 'community',
     capabilities: caps({
       search: true,
       library: true,
@@ -166,6 +204,7 @@ export const builtinProviderPlugins: ProviderPlugin[] = [
     name: 'Local Music',
     defaultPriority: 50,
     icon: 'folder',
+    supportLevel: 'official',
     capabilities: caps({
       search: true,
       library: true,
@@ -177,6 +216,7 @@ export const builtinProviderPlugins: ProviderPlugin[] = [
     id: 'custom-website',
     name: 'Custom website',
     defaultPriority: 60,
+    supportLevel: 'community',
     capabilities: caps({
       search: true,
       library: true,

@@ -14,6 +14,7 @@ export type {
   ProviderContext,
   ProviderSettings,
   ProviderStorage,
+  ProviderSupportLevel,
   SearchProvider,
   MetadataProvider,
   ArtworkProvider,

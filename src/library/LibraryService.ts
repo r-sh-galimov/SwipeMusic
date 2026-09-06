@@ -89,8 +89,12 @@ export class LibraryService {
     const roots: LibraryNode[] = []
 
     for (const provider of providers) {
-      const localRoots = await provider.getRoot()
-      roots.push(...mapNodes(provider.id, localRoots))
+      try {
+        const localRoots = await provider.getRoot()
+        roots.push(...mapNodes(provider.id, localRoots))
+      } catch {
+        // Один провайдер не должен ронять дерево Library.
+      }
     }
 
     return roots
@@ -101,9 +105,13 @@ export class LibraryService {
     if (providerId === ALL_ID) {
       return []
     }
-    const provider = libraryProviderRegistry.get(providerId)
-    const children = await provider.getChildren(localId)
-    return mapNodes(provider.id, children)
+    try {
+      const provider = libraryProviderRegistry.get(providerId)
+      const children = await provider.getChildren(localId)
+      return mapNodes(provider.id, children)
+    } catch {
+      return []
+    }
   }
 
   async getTracks(nodeId: string): Promise<Track[]> {
@@ -111,8 +119,12 @@ export class LibraryService {
     if (providerId === ALL_ID) {
       return []
     }
-    const provider = libraryProviderRegistry.get(providerId)
-    return provider.getTracks(localId)
+    try {
+      const provider = libraryProviderRegistry.get(providerId)
+      return await provider.getTracks(localId)
+    } catch {
+      return []
+    }
   }
 
   async search(query: string): Promise<Track[]> {
@@ -121,17 +133,44 @@ export class LibraryService {
       return []
     }
 
-    const results = await Promise.all(
-      this.providersForScope().map((provider) => provider.search(normalized)),
+    const providers = this.providersForScope()
+    const settled = await Promise.allSettled(
+      providers.map((provider) => provider.search(normalized)),
     )
-    return dedupeTracks(results.flat())
+    const tracks = settled.flatMap((result) =>
+      result.status === 'fulfilled' ? result.value : [],
+    )
+    return dedupeTracks(tracks)
   }
 
-  async refresh(): Promise<void> {
+  /**
+   * Обновление всех провайдеров в scope.
+   * Возвращает мягкие ошибки отдельных источников (частичный успех OK).
+   */
+  async refresh(): Promise<string[]> {
     this.breadcrumbCache.clear()
-    await Promise.all(
-      this.providersForScope().map((provider) => provider.refresh()),
+    const providers = this.providersForScope()
+    const settled = await Promise.allSettled(
+      providers.map((provider) => provider.refresh()),
     )
+
+    const failures = settled.flatMap((result, index) => {
+      if (result.status !== 'rejected') {
+        return []
+      }
+      const provider = providers[index]
+      const detail =
+        result.reason instanceof Error
+          ? result.reason.message
+          : String(result.reason)
+      return [`${provider.label}: ${detail}`]
+    })
+
+    if (failures.length > 0 && failures.length === providers.length) {
+      throw new Error(failures.join(' · '))
+    }
+
+    return failures
   }
 
   async getBreadcrumb(nodeId: string | null): Promise<LibraryNode[]> {

@@ -1,6 +1,8 @@
 import { LocalMusicPanel } from '../components/LocalMusicPanel'
 import { ProviderAuthPanel } from '../components/ProviderAuthPanel'
+import { ProviderSupportBadge } from '../components/ProviderSupportBadge'
 import { DevPlaybackPanel } from '../components/DevPlaybackPanel'
+import { DevYandexLogPanel } from '../components/DevYandexLogPanel'
 import {
   disablePlugin,
   enablePlugin,
@@ -58,6 +60,7 @@ export default function Sources() {
       {showLocalPanel ? <LocalMusicPanel /> : null}
 
       {import.meta.env.DEV ? <DevPlaybackPanel /> : null}
+      {import.meta.env.DEV ? <DevYandexLogPanel /> : null}
 
       {authPlugins.map((source) => (
         <ProviderAuthPanel
@@ -105,7 +108,23 @@ export default function Sources() {
                   className="border-b border-[var(--color-border)] last:border-b-0"
                 >
                   <td className="px-3 py-3 font-medium text-[var(--color-fg)]">
-                    {source.name}
+                    <div className="space-y-1">
+                      <span>{source.name}</span>
+                      {(() => {
+                        const manifest = pluginRegistry.has(source.id)
+                          ? pluginRegistry.getManifest(source.id)
+                          : null
+                        if (!manifest?.supportLevel) {
+                          return null
+                        }
+                        return (
+                          <ProviderSupportBadge
+                            level={manifest.supportLevel}
+                            description={manifest.supportDescription}
+                          />
+                        )
+                      })()}
+                    </div>
                   </td>
                   <td className="px-3 py-3 text-[var(--color-muted)]">
                     {caps.length > 0 ? caps.join(', ') : sourceTypeLabel(source.type)}

@@ -51,4 +51,8 @@ Preview играет через `LocalPlayerAdapter` (обычный https URL).
 
 ## Dev
 
-На `/sources` в development: панель принудительного выбора кандидата.
+На `/sources` в development: **PlaybackResolver Debug Center** (`DevPlaybackPanel`).
+
+Только Dev UI: timeline, Candidate Inspector, Decision, Performance (`performance.now`),
+Replay Resolve / Replay Current (без Player), Copy / Download `resolver-report.json`,
+фильтры и отображение config. Логика `PlaybackResolver` не изменяется.

@@ -11,17 +11,19 @@ import type {
   ProviderCapabilities,
   ProviderManifest,
   ProviderPlugin,
+  SearchProvider,
 } from './types'
 
 type RegisteredPluginState = {
   plugin: ProviderPlugin
   enabled: boolean
   adapter: MusicSourceAdapter
+  searchProvider: SearchProvider | null
 }
 
 /**
  * Единый реестр ProviderPlugin.
- * Регистрация адаптера и LibraryProvider — через этот слой.
+ * Регистрация адаптера, LibraryProvider и SearchProvider — через этот слой.
  */
 export class PluginRegistry {
   private readonly plugins = new Map<string, RegisteredPluginState>()
@@ -51,10 +53,13 @@ export class PluginRegistry {
     const enabled =
       existingConfig?.enabled ?? plugin.manifest.defaultEnabled ?? false
 
+    const searchProvider = plugin.createSearchProvider?.(ctx) ?? null
+
     this.plugins.set(id, {
       plugin,
       enabled,
       adapter,
+      searchProvider,
     })
 
     if (!existingConfig) {
@@ -128,6 +133,14 @@ export class PluginRegistry {
     }
     const ctx = createProviderContext(id)
     return state.plugin.createAuthenticationProvider(ctx)
+  }
+
+  /**
+   * SearchProvider плагина (если объявлен).
+   * SearchEngine использует его для live catalog search.
+   */
+  getSearchProvider(id: string): SearchProvider | null {
+    return this.plugins.get(id)?.searchProvider ?? null
   }
 
   enable(id: string): void {

@@ -45,8 +45,12 @@ Local Files вызывают `indexTracksForSource` в конце `runScan`.
 
 ## Поиск
 
-- `capabilities.library === true` → `mediaIndex.search()`
-- иначе → `adapter.search()` (remote live API)
+- `SearchProvider` (SDK) или `capabilities.search === true` → live `adapter.search()` / Web API
+- иначе `capabilities.library === true` → `mediaIndex.search()`
+- иначе → `adapter.search()` (fallback)
+
+MediaIndex — для библиотеки, не для catalog search у источников с `search: true`
+(например Spotify).
 
 ## Хранилище
 

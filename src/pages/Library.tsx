@@ -250,24 +250,26 @@ export default function Library() {
           </div>
 
           {error ? (
-            <p className="text-sm text-rose-600">{error}</p>
-          ) : (
-            <LibraryContentTable
-              rows={rows}
-              selectedIds={selectedTrackIds}
-              onToggle={(trackId, shiftKey) => {
-                handleToggleWithRange(trackId, shiftKey)
-              }}
-              onPlay={(trackId) => {
-                const row = rows.find((item) => item.track.id === trackId)
-                if (row) {
-                  playFromRows(row.track)
-                }
-              }}
-              onOpenActions={setActionTrackId}
-              providerLabelBySourceId={providerLabelById}
-            />
-          )}
+            <p className="text-sm text-amber-700 dark:text-amber-300" role="status">
+              {error}
+            </p>
+          ) : null}
+
+          <LibraryContentTable
+            rows={rows}
+            selectedIds={selectedTrackIds}
+            onToggle={(trackId, shiftKey) => {
+              handleToggleWithRange(trackId, shiftKey)
+            }}
+            onPlay={(trackId) => {
+              const row = rows.find((item) => item.track.id === trackId)
+              if (row) {
+                playFromRows(row.track)
+              }
+            }}
+            onOpenActions={setActionTrackId}
+            providerLabelBySourceId={providerLabelById}
+          />
 
           <BulkActionBar
             count={selectedTrackIds.length}

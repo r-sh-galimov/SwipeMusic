@@ -5,6 +5,7 @@ import type {
   SpotifyTrack,
   SpotifyUserProfile,
 } from './types'
+import { pushDevSearchLog } from '../../../services/searchEngine/devSearchLog'
 
 const API_BASE = 'https://api.spotify.com/v1'
 
@@ -18,12 +19,15 @@ export class SpotifyApiError extends Error {
   }
 }
 
-/** Ограничение Spotify (Free / app owner) — не сбой приложения. */
+/** Ограничение Spotify (Free user / playback) — не сбой приложения. */
 export function isPremiumRequiredError(error: unknown): boolean {
   if (!(error instanceof SpotifyApiError)) {
     return false
   }
   if (error.status !== 403) {
+    return false
+  }
+  if (isAppOwnerPremiumRequiredError(error)) {
     return false
   }
   const message = error.message.toLowerCase()
@@ -33,6 +37,28 @@ export function isPremiumRequiredError(error: unknown): boolean {
     message.includes('active premium')
   )
 }
+
+/**
+ * Политика Spotify Development Mode: Premium нужен владельцу приложения
+ * в Developer Dashboard (Client ID), не обязательно текущему listener.
+ */
+export function isAppOwnerPremiumRequiredError(error: unknown): boolean {
+  if (!(error instanceof SpotifyApiError)) {
+    return false
+  }
+  if (error.status !== 403) {
+    return false
+  }
+  const message = error.message.toLowerCase()
+  return (
+    message.includes('owner of the app') ||
+    message.includes('owner of the application')
+  )
+}
+
+export const SPOTIFY_APP_OWNER_PREMIUM_MESSAGE =
+  'Spotify Web API заблокирован: у владельца приложения в Developer Dashboard нет Premium. Оформите Premium на том же аккаунте, что создал Client ID. После оплаты подождите несколько часов и повторите поиск.'
+
 
 export class SpotifyApiClient {
   private readonly getAccessToken: () => Promise<string>
@@ -54,9 +80,16 @@ export class SpotifyApiClient {
       limit: String(options?.limit ?? 20),
       offset: String(options?.offset ?? 0),
     })
+    pushDevSearchLog({
+      stage: 'request',
+      message: 'GET /v1/search',
+      providerId: 'spotify',
+      detail: `q=${query}`,
+    })
     const data = await this.getJson<{ tracks: SpotifyPaging<SpotifyTrack> }>(
       `/search?${params.toString()}`,
       options?.signal,
+      { logHttpAsSearch: true },
     )
     return data.tracks
   }
@@ -220,19 +253,49 @@ export class SpotifyApiClient {
     return tracks
   }
 
-  private async getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+  private async getJson<T>(
+    path: string,
+    signal?: AbortSignal,
+    options?: { logHttpAsSearch?: boolean },
+  ): Promise<T> {
     const token = await this.getAccessToken()
     const response = await fetch(`${API_BASE}${path}`, {
       headers: { Authorization: `Bearer ${token}` },
       signal,
     })
 
+    if (options?.logHttpAsSearch) {
+      pushDevSearchLog({
+        stage: 'http',
+        message: `HTTP ${response.status}`,
+        providerId: 'spotify',
+      })
+    }
+
     if (!response.ok) {
       const text = await response.text()
-      throw new SpotifyApiError(
+      const apiError = new SpotifyApiError(
         `Spotify API ${response.status}: ${text}`,
         response.status,
       )
+      if (options?.logHttpAsSearch) {
+        if (isAppOwnerPremiumRequiredError(apiError)) {
+          pushDevSearchLog({
+            stage: 'error',
+            message: 'App owner Premium required',
+            providerId: 'spotify',
+            detail: SPOTIFY_APP_OWNER_PREMIUM_MESSAGE,
+          })
+        } else {
+          pushDevSearchLog({
+            stage: 'error',
+            message: 'Spotify Web API search failed',
+            providerId: 'spotify',
+            detail: `HTTP ${response.status}: ${text.slice(0, 240)}`,
+          })
+        }
+      }
+      throw apiError
     }
 
     return (await response.json()) as T

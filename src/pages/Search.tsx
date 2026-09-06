@@ -1,6 +1,7 @@
 import type { FormEvent } from 'react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { DevSearchLogPanel } from '../components/DevSearchLogPanel'
 import { useSearchStore } from '../store/searchStore'
 import { useSwipeDeckSessionStore } from '../store/swipeDeckSessionStore'
 import type { Track } from '../types/track'
@@ -78,6 +79,8 @@ export default function Search() {
           </button>
         )}
       </form>
+
+      {import.meta.env.DEV ? <DevSearchLogPanel /> : null}
 
       {recentSearches.length > 0 && (
         <div className="space-y-2">

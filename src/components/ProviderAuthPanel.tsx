@@ -11,6 +11,7 @@ import {
 } from '../sdk'
 import { getPlayerManager } from '../services/audioPlayer'
 import { sourceManager } from '../sources'
+import { ProviderSupportBadge } from './ProviderSupportBadge'
 
 type ProviderAuthPanelProps = {
   pluginId: string
@@ -231,6 +232,11 @@ export function ProviderAuthPanel({ pluginId, name }: ProviderAuthPanelProps) {
   }
 
   const descriptor = state.descriptor
+  const manifest = pluginRegistry.has(pluginId)
+    ? pluginRegistry.getManifest(pluginId)
+    : null
+  const supportLevel = manifest?.supportLevel ?? 'official'
+  const supportDescription = manifest?.supportDescription
 
   if (!descriptor) {
     return (
@@ -241,6 +247,10 @@ export function ProviderAuthPanel({ pluginId, name }: ProviderAuthPanelProps) {
         <h2 className="font-display text-lg font-semibold text-[var(--color-fg)]">
           {name}
         </h2>
+        <ProviderSupportBadge
+          level={supportLevel}
+          description={supportDescription}
+        />
       </section>
     )
   }
@@ -249,10 +259,16 @@ export function ProviderAuthPanel({ pluginId, name }: ProviderAuthPanelProps) {
 
   return (
     <section className="space-y-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-      <div className="space-y-1">
-        <h2 className="font-display text-lg font-semibold text-[var(--color-fg)]">
-          {descriptor.title}
-        </h2>
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <h2 className="font-display text-lg font-semibold text-[var(--color-fg)]">
+            {descriptor.title}
+          </h2>
+          <ProviderSupportBadge level={supportLevel} />
+        </div>
+        {supportDescription ? (
+          <p className="text-xs text-[var(--color-muted)]">{supportDescription}</p>
+        ) : null}
         <p className={`text-sm ${severityClass(descriptor.severity)}`}>
           {descriptor.description}
         </p>

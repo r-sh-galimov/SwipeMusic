@@ -184,6 +184,45 @@ createAuthenticationProvider: () => ({
 В **DEV** Spotify при отсутствии Client ID возвращает `setup` с инструкциями.
 В **production** — нейтральное `description` без env.
 
+## Уровень поддержки (supportLevel)
+
+Каждый `ProviderManifest` может указать:
+
+```ts
+supportLevel: 'official' | 'experimental' | 'community'
+supportDescription?: string
+```
+
+UI (`ProviderSupportBadge` / `ProviderAuthPanel` / таблица `/sources`) рисует badge
+**только** из этих полей — без `if (providerId === …)`.
+
+| Уровень | Смысл |
+|---------|--------|
+| `official` | Публичный/документированный API |
+| `experimental` | Внутренний или нестабильный API |
+| `community` | Community / scraper / best-effort |
+
+## Яндекс Музыка (experimental)
+
+Публичного Developer API нет. Провайдер использует внутренний
+`api.music.yandex.net` + OAuth Device Flow (client_id официального клиента ЯМ).
+
+Возможности:
+
+- AuthenticationProvider (Device Flow)
+- SearchProvider / `adapter.search`
+- LibraryProvider (likes + playlists → MediaIndex)
+- PlaybackCandidate (`stream` через download-info, `preview` если есть)
+
+Ограничения:
+
+- ToS / ломкость endpoints
+- CORS → Vite proxy только в DEV (`/api/yandex-music`, `/api/yandex-oauth`, `/api/yandex-fetch`)
+- Полный стрим зависит от аккаунта/подписки и подписи download URL
+- Production static host требует своего reverse-proxy
+
+На `/sources`: badge **Experimental** + `supportDescription` из манифеста.
+
 ## Spotify (пример)
 
 1. Создайте приложение в [Spotify Dashboard](https://developer.spotify.com/dashboard).
@@ -197,6 +236,22 @@ createAuthenticationProvider: () => ({
 Playback: полный трек через **Web Playback SDK** (`SpotifyPlayerAdapter`).
 Нужен Spotify Premium. После добавления scopes `streaming` /
 `user-*-playback-state` — переподключите аккаунт (Disconnect → Connect).
+
+## Яндекс Музыка (вариант A)
+
+Официального публичного Developer API Яндекс Музыки **нет**.
+
+В SwipeMusic плагин подключён как **честный stub**:
+
+- `AuthenticationProvider` → статус `not_configured` + setup (без OAuth)
+- capabilities: `authentication: true`, `search/library/streaming: false`
+- `getPlaybackCandidates` → `available: false` + понятный `reason`
+- неофициальный `api.music.yandex.net` **не используется**
+
+UI (`ProviderAuthPanel`) не знает про Яндекс — только дескриптор статуса.
+
+Полноценный паритет со Spotify возможен только после партнёрского API
+или явного решения продукта на неофициальный клиент (вариант B).
 
 ## Что не нужно менять
 

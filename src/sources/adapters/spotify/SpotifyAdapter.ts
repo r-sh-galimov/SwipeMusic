@@ -15,7 +15,7 @@ import type { SourceType } from '../../../types/source'
 import type { Track } from '../../../types/track'
 import type { PlaybackCandidate } from '../../../services/playbackResolver'
 import { indexTracksForSource } from '../../../services/mediaIndex'
-import { SpotifyApiClient, SpotifyApiError, isPremiumRequiredError } from './api'
+import { SpotifyApiClient, SpotifyApiError, isPremiumRequiredError, isAppOwnerPremiumRequiredError, SPOTIFY_APP_OWNER_PREMIUM_MESSAGE } from './api'
 import {
   beginSpotifyLogin,
   clearSpotifyAuthCallbackFromUrl,
@@ -123,11 +123,16 @@ export class SpotifyAdapter implements MusicSourceAdapter {
         limit: params?.limit ?? 20,
         signal: params?.signal,
       })
+      this.appOwnerPremiumBlocked = false
       return {
         tracks: page.items.map((item) => mapSpotifyTrackToTrack(item)),
         nextCursor: page.next ? String(page.offset + page.limit) : null,
       }
     } catch (error) {
+      if (isAppOwnerPremiumRequiredError(error)) {
+        this.appOwnerPremiumBlocked = true
+        throw new Error(SPOTIFY_APP_OWNER_PREMIUM_MESSAGE)
+      }
       if (error instanceof SpotifyApiError && error.status === 401) {
         await this.refreshOrClear()
       }
@@ -223,6 +228,7 @@ export class SpotifyAdapter implements MusicSourceAdapter {
   }
 
   private product: 'premium' | 'free' | 'unknown' = 'unknown'
+  private appOwnerPremiumBlocked = false
 
   private async isPremiumUser(): Promise<boolean> {
     if (!this.isAvailable()) {
@@ -315,6 +321,9 @@ export class SpotifyAdapter implements MusicSourceAdapter {
         this.syncing = true
         try {
           const count = await this.syncLibrary()
+          if (this.appOwnerPremiumBlocked) {
+            throw new Error(SPOTIFY_APP_OWNER_PREMIUM_MESSAGE)
+          }
           return { trackCount: count }
         } finally {
           this.syncing = false
@@ -396,6 +405,25 @@ export class SpotifyAdapter implements MusicSourceAdapter {
 
     await this.refreshAccountTier()
     const premium = this.product === 'premium' && this.librarySyncAvailable
+
+    if (this.appOwnerPremiumBlocked) {
+      return {
+        status: 'error',
+        title,
+        description: SPOTIFY_APP_OWNER_PREMIUM_MESSAGE,
+        severity: 'warning',
+        actions: [
+          { id: 'logout', label: 'Disconnect', variant: 'danger' },
+        ],
+        details: [
+          ...this.buildSyncDetails(),
+          {
+            label: 'Web API',
+            value: 'Blocked: app owner Premium required',
+          },
+        ],
+      }
+    }
 
     if (!premium) {
       return {
@@ -599,8 +627,14 @@ export class SpotifyAdapter implements MusicSourceAdapter {
 
       return this.tracks.length
     } catch (error) {
-      if (isPremiumRequiredError(error)) {
-        // Ожидаемое ограничение Free / app owner — не ошибка приложения.
+      if (
+        isPremiumRequiredError(error) ||
+        isAppOwnerPremiumRequiredError(error)
+      ) {
+        // Ожидаемое ограничение Free / app-owner Premium — не валит Library.
+        if (isAppOwnerPremiumRequiredError(error)) {
+          this.appOwnerPremiumBlocked = true
+        }
         this.markLibrarySyncLimited()
         return this.tracks.length
       }
@@ -650,6 +684,8 @@ export class SpotifyAdapter implements MusicSourceAdapter {
       await this.persistSyncMeta()
       // Free / Premium Required — syncLibrary сам помечает limited, не бросает.
       await this.syncLibrary()
+      const { platformEventBus } = await import('../../../sdk/EventBus')
+      platformEventBus.emit('SourceAuthenticated', { sourceId: SOURCE_ID })
     } finally {
       clearSpotifyAuthCallbackFromUrl()
     }

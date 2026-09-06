@@ -19,6 +19,12 @@ export type ProviderCapabilities = {
   previewPlayback: boolean
 }
 
+/**
+ * Уровень поддержки провайдера.
+ * UI показывает badge только по этому полю — без if (providerId).
+ */
+export type ProviderSupportLevel = 'official' | 'experimental' | 'community'
+
 export type ProviderManifest = {
   id: string
   name: string
@@ -31,6 +37,10 @@ export type ProviderManifest = {
   /** Включать ли при первой регистрации. */
   defaultEnabled?: boolean
   capabilities: ProviderCapabilities
+  /** official | experimental | community */
+  supportLevel?: ProviderSupportLevel
+  /** Пояснение для Experimental/Community — рисует UI as-is. */
+  supportDescription?: string
 }
 
 export type ProviderSettings = Record<string, string | number | boolean | null>

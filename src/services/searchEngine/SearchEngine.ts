@@ -4,6 +4,10 @@ import { bootstrapMusicSources, sourceManager } from '../../sources'
 import { pluginRegistry } from '../../sdk'
 import { getMediaIndex, syncAdapterToMediaIndex } from '../mediaIndex'
 import {
+  beginDevSearchSession,
+  pushDevSearchLog,
+} from './devSearchLog'
+import {
   mergeAndDedupeSearchResults,
   type RankedTrack,
 } from './mergeResults'
@@ -23,7 +27,12 @@ const initialState: SearchEngineState = {
 
 /**
  * Универсальный поисковый движок.
- * Не знает конкретные Spotify/Yandex — только SourceManager + MusicSourceAdapter.
+ * Не знает конкретные Spotify/Yandex — только SourceManager + PluginRegistry + adapters.
+ *
+ * Стратегия на источник:
+ * 1. SearchProvider (SDK) или capabilities.search → live adapter.search()
+ * 2. иначе capabilities.library → MediaIndex
+ * 3. иначе → adapter.search()
  */
 export class SearchEngine {
   private state: SearchEngineState = { ...initialState }
@@ -62,6 +71,8 @@ export class SearchEngine {
     const enabled = sourceManager.listEnabledSources()
     const activeSourceIds = enabled.map((source) => source.id)
 
+    beginDevSearchSession(normalized)
+
     this.patchState({
       query: normalized,
       status: 'loading',
@@ -70,10 +81,43 @@ export class SearchEngine {
       hasMore: false,
     })
 
+    // Dev: показать search-capable источники, которые выключены и не участвуют.
+    if (import.meta.env.DEV) {
+      const enabledIds = new Set(activeSourceIds)
+      for (const config of sourceManager.listSources()) {
+        if (enabledIds.has(config.id)) {
+          continue
+        }
+        const caps = pluginRegistry.getCapabilities(config.id)
+        const hasSearch =
+          Boolean(pluginRegistry.getSearchProvider(config.id)) ||
+          caps?.search === true
+        if (!hasSearch) {
+          continue
+        }
+        pushDevSearchLog({
+          stage: 'skip',
+          message: `Skipped: source disabled`,
+          providerId: config.id,
+          detail: 'Включите на /sources (после OAuth источник должен включаться сам)',
+        })
+      }
+    }
+
     const cacheKey = this.buildCacheKey(normalized, activeSourceIds)
     const cached = this.cache.get(cacheKey)
     if (cached) {
       this.sourceCursors.clear()
+      pushDevSearchLog({
+        stage: 'merged',
+        message: `Results merged (cache)`,
+        detail: `tracks=${cached.length}`,
+      })
+      pushDevSearchLog({
+        stage: 'ui',
+        message: 'UI rendered',
+        detail: `results=${cached.length}`,
+      })
       this.patchState({
         status: 'success',
         results: cached,
@@ -86,6 +130,7 @@ export class SearchEngine {
 
     try {
       const ranked: RankedTrack[] = []
+      const providerErrors: string[] = []
 
       await Promise.all(
         enabled.map(async (config, sourceOrder) => {
@@ -94,37 +139,128 @@ export class SearchEngine {
           }
 
           const adapter = sourceManager.getAdapter(config.id)
+          const providerLabel = config.name || config.id
+
+          pushDevSearchLog({
+            stage: 'provider',
+            message: `Provider: ${providerLabel}`,
+            providerId: config.id,
+          })
+
           const available = await adapter.isAvailable()
           if (!available) {
             this.sourceCursors.set(config.id, null)
+            pushDevSearchLog({
+              stage: 'skip',
+              message: `Skipped: provider unavailable`,
+              providerId: config.id,
+              detail: 'isAvailable() === false',
+            })
             return
           }
 
           const caps = pluginRegistry.getCapabilities(config.id)
-          const useIndex = caps?.library === true
+          const searchProvider = pluginRegistry.getSearchProvider(config.id)
+          const useLiveSearch =
+            Boolean(searchProvider) || caps?.search === true
+          const useIndex = !useLiveSearch && caps?.library === true
 
           let tracks: Track[] = []
           let nextCursor: string | null = null
 
-          if (useIndex) {
-            const index = getMediaIndex()
-            await index.whenReady()
-            let records = index.search(normalized, [config.id])
-            if (records.length === 0 && index.bySource(config.id).length === 0) {
-              await syncAdapterToMediaIndex(adapter, {
+          try {
+            if (useLiveSearch) {
+              pushDevSearchLog({
+                stage: 'request',
+                message: searchProvider
+                  ? 'SearchProvider.search()'
+                  : 'MusicSourceAdapter.search()',
+                providerId: config.id,
+              })
+
+              // SearchProvider и adapter.search используют один live API;
+              // adapter даёт SearchResult + cursor.
+              const result = await adapter.search(normalized, {
                 signal: controller.signal,
               })
-              records = index.search(normalized, [config.id])
+              tracks = result.tracks
+              nextCursor = result.nextCursor ?? null
+
+              pushDevSearchLog({
+                stage: 'tracks',
+                message: `Tracks received: ${tracks.length}`,
+                providerId: config.id,
+              })
+              pushDevSearchLog({
+                stage: 'mapped',
+                message: `Mapped Track: ${tracks.length}`,
+                providerId: config.id,
+              })
+            } else if (useIndex) {
+              pushDevSearchLog({
+                stage: 'request',
+                message: 'MediaIndex.search()',
+                providerId: config.id,
+              })
+              const index = getMediaIndex()
+              await index.whenReady()
+              let records = index.search(normalized, [config.id])
+              if (
+                records.length === 0 &&
+                index.bySource(config.id).length === 0
+              ) {
+                await syncAdapterToMediaIndex(adapter, {
+                  signal: controller.signal,
+                })
+                records = index.search(normalized, [config.id])
+              }
+              tracks = records.map((record) => record.track)
+              nextCursor = null
+              pushDevSearchLog({
+                stage: 'tracks',
+                message: `Tracks received: ${tracks.length}`,
+                providerId: config.id,
+                detail: 'via MediaIndex',
+              })
+              pushDevSearchLog({
+                stage: 'mapped',
+                message: `Mapped Track: ${tracks.length}`,
+                providerId: config.id,
+              })
+            } else {
+              pushDevSearchLog({
+                stage: 'request',
+                message: 'MusicSourceAdapter.search() (fallback)',
+                providerId: config.id,
+              })
+              const result = await adapter.search(normalized, {
+                signal: controller.signal,
+              })
+              tracks = result.tracks
+              nextCursor = result.nextCursor ?? null
+              pushDevSearchLog({
+                stage: 'tracks',
+                message: `Tracks received: ${tracks.length}`,
+                providerId: config.id,
+              })
+              pushDevSearchLog({
+                stage: 'mapped',
+                message: `Mapped Track: ${tracks.length}`,
+                providerId: config.id,
+              })
             }
-            tracks = records.map((record) => record.track)
-            nextCursor = null
-          } else {
-            // Remote API / live search.
-            const result = await adapter.search(normalized, {
-              signal: controller.signal,
+          } catch (error) {
+            const detail =
+              error instanceof Error ? error.message : String(error)
+            pushDevSearchLog({
+              stage: 'error',
+              message: `Provider search failed`,
+              providerId: config.id,
+              detail,
             })
-            tracks = result.tracks
-            nextCursor = result.nextCursor ?? null
+            providerErrors.push(`${providerLabel}: ${detail}`)
+            this.sourceCursors.set(config.id, null)
+            return
           }
 
           if (controller.signal.aborted) {
@@ -149,16 +285,34 @@ export class SearchEngine {
       }
 
       const merged = mergeAndDedupeSearchResults(ranked)
-      this.cache.set(cacheKey, merged)
+      if (merged.length > 0) {
+        this.cache.set(cacheKey, merged)
+      }
 
-      const hasMore = [...this.sourceCursors.values()].some(
-        (cursor) => Boolean(cursor),
+      const hasMore = [...this.sourceCursors.values()].some((cursor) =>
+        Boolean(cursor),
       )
 
+      pushDevSearchLog({
+        stage: 'merged',
+        message: 'Results merged',
+        detail: `tracks=${merged.length}`,
+      })
+      pushDevSearchLog({
+        stage: 'ui',
+        message: 'UI rendered',
+        detail: `results=${merged.length}`,
+      })
+
+      const surfaceError =
+        merged.length === 0 && providerErrors.length > 0
+          ? providerErrors[0]
+          : null
+
       this.patchState({
-        status: 'success',
+        status: surfaceError ? 'error' : 'success',
         results: merged,
-        error: null,
+        error: surfaceError,
         lastSearchTime: Date.now(),
         cacheKey,
         hasMore,
@@ -169,6 +323,12 @@ export class SearchEngine {
       if (controller.signal.aborted) {
         return this.state.results
       }
+
+      pushDevSearchLog({
+        stage: 'error',
+        message: 'SearchEngine failed',
+        detail: error instanceof Error ? error.message : String(error),
+      })
 
       this.patchState({
         status: 'error',

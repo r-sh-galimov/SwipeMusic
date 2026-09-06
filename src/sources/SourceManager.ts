@@ -14,6 +14,8 @@ import type { FetchTracksParams, FetchTracksResult } from './types'
 
 type SourceManagerListener = (sources: SourceConfig[]) => void
 
+const ENABLED_STORAGE_KEY = 'swipe-music.source-enabled'
+
 const DEFAULT_CONFIGS: SourceConfig[] = [
   {
     id: 'mock',
@@ -93,9 +95,15 @@ export class SourceManager {
       this.configs.set(config.id, { ...config, settings: { ...config.settings } })
     }
 
+    const hadPersistedEnabled = this.loadPersistedEnabled()
+
     this.bootstrapped = true
     this.syncLegacyRegistry()
     this.emit()
+
+    if (!hadPersistedEnabled) {
+      void this.migrateEnableAuthenticatedSources()
+    }
   }
 
   listSources(): SourceConfig[] {
@@ -260,7 +268,81 @@ export class SourceManager {
 
     this.configs.set(id, { ...config, enabled })
     this.syncLegacyRegistry()
+    this.persistEnabled()
     this.emit()
+  }
+
+  private loadPersistedEnabled(): boolean {
+    try {
+      const raw = localStorage.getItem(ENABLED_STORAGE_KEY)
+      if (!raw) {
+        return false
+      }
+      const parsed = JSON.parse(raw) as Record<string, unknown>
+      for (const [id, enabled] of Object.entries(parsed)) {
+        const config = this.configs.get(id)
+        if (config && typeof enabled === 'boolean') {
+          this.configs.set(id, { ...config, enabled })
+        }
+      }
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  private persistEnabled(): void {
+    try {
+      const payload: Record<string, boolean> = {}
+      for (const config of this.configs.values()) {
+        payload[config.id] = config.enabled
+      }
+      localStorage.setItem(ENABLED_STORAGE_KEY, JSON.stringify(payload))
+    } catch {
+      // private mode / quota — не критично для работы сессии
+    }
+  }
+
+  /**
+   * Первый запуск без сохранённых флагов: включить источники,
+   * которые уже аутентифицированы (типичный кейс после OAuth redirect).
+   */
+  private async migrateEnableAuthenticatedSources(): Promise<void> {
+    if (localStorage.getItem(ENABLED_STORAGE_KEY)) {
+      return
+    }
+
+    let changed = false
+    for (const config of this.listSources()) {
+      if (config.enabled || !sourceRegistry.has(config.id)) {
+        continue
+      }
+      const adapter = sourceRegistry.get(config.id)
+      if (!adapter.capabilities.includes('auth')) {
+        continue
+      }
+      try {
+        await adapter.initialize()
+        if (await adapter.isAvailable()) {
+          this.configs.set(config.id, { ...config, enabled: true })
+          changed = true
+        }
+      } catch {
+        // миграция best-effort
+      }
+    }
+
+    if (changed) {
+      this.syncLegacyRegistry()
+      this.emit()
+    }
+    this.persistEnabled()
+    try {
+      const { pluginRegistry } = await import('../sdk/PluginRegistry')
+      pluginRegistry.syncEnabledFromSourceManager()
+    } catch {
+      // ignore
+    }
   }
 
   private nextPriority(): number {

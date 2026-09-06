@@ -1,7 +1,7 @@
 import { getMediaIndex } from '../../../services/mediaIndex'
 import type { Track } from '../../../types/track'
 import type { LibraryNode, LibraryProvider } from '../../../types/libraryProvider'
-import { getSpotifyAdapter, type SpotifyAdapter } from './SpotifyAdapter'
+import { getYandexMusicAdapter, type YandexMusicAdapter } from './YandexMusicAdapter'
 
 const ROOT_ALL = 'all-tracks'
 const ROOT_ARTISTS = 'artists'
@@ -12,18 +12,14 @@ const ARTIST_PREFIX = 'artist:'
 const ALBUM_PREFIX = 'album:'
 const PLAYLIST_PREFIX = 'playlist:'
 
-/**
- * Library для Spotify: All / Artists / Albums / Playlists / Favorites.
- * Данные только из MediaIndex (+ метаданные плейлистов из адаптера).
- */
-export class SpotifyLibraryProvider implements LibraryProvider {
+export class YandexLibraryProvider implements LibraryProvider {
   readonly id: string
   readonly label: string
   readonly capabilities = ['tree', 'search', 'refresh'] as const
 
-  private readonly adapter: SpotifyAdapter
+  private readonly adapter: YandexMusicAdapter
 
-  constructor(adapter: SpotifyAdapter = getSpotifyAdapter()) {
+  constructor(adapter: YandexMusicAdapter = getYandexMusicAdapter()) {
     this.adapter = adapter
     this.id = adapter.id
     this.label = adapter.label
@@ -184,23 +180,25 @@ export class SpotifyLibraryProvider implements LibraryProvider {
       if (!playlist) {
         return []
       }
-      const idSet = new Set(playlist.trackIds)
-      return tracks.filter(
-        (track) =>
-          idSet.has(track.externalId) ||
-          track.tags?.includes(`playlist:${playlistId}`),
-      )
+      const byId = new Map(tracks.map((track) => [track.id, track]))
+      return playlist.trackIds
+        .map((id) => byId.get(id))
+        .filter((track): track is Track => Boolean(track))
     }
     return []
   }
 
   async search(query: string): Promise<Track[]> {
+    const normalized = query.trim().toLowerCase()
+    if (!normalized) {
+      return []
+    }
     const index = getMediaIndex()
     await index.whenReady()
     return index.search(query, [this.id]).map((record) => record.track)
   }
 }
 
-export function createSpotifyLibraryProvider(): LibraryProvider {
-  return new SpotifyLibraryProvider()
+export function createYandexLibraryProvider(): YandexLibraryProvider {
+  return new YandexLibraryProvider()
 }

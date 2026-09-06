@@ -8,3 +8,4 @@ export {
   createSpotifyLibraryProvider,
 } from './SpotifyLibraryProvider'
 export { isSpotifyConfigured, getSpotifyRedirectUri } from './auth'
+export { createSpotifySearchProvider } from './SpotifySearchProvider'

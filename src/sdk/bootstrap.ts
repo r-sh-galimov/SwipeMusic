@@ -13,6 +13,7 @@ import {
   pluginRegistry,
   registerPlugin,
 } from './PluginRegistry'
+import { platformEventBus } from './EventBus'
 import { builtinProviderPlugins } from './builtin/builtinPlugins'
 import type { ProviderCapabilities, ProviderPlugin } from './types'
 
@@ -76,5 +77,15 @@ export function bootstrapProviderPlugins(): void {
   }
 
   pluginRegistry.syncEnabledFromSourceManager()
-  pluginRegistry.markBootstrapped()
+
+  if (!pluginRegistry.isBootstrapped()) {
+    platformEventBus.on('SourceAuthenticated', ({ sourceId }) => {
+      if (!sourceManager.listSources().some((source) => source.id === sourceId)) {
+        return
+      }
+      sourceManager.enableSource(sourceId)
+      pluginRegistry.syncEnabledFromSourceManager()
+    })
+    pluginRegistry.markBootstrapped()
+  }
 }

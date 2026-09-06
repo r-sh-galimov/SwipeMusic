@@ -208,17 +208,21 @@ export const useLibraryUiStore = create<LibraryUiStore>((set, get) => ({
   refresh: async () => {
     set({ isLoading: true, error: null })
     try {
-      await libraryService.refresh()
+      const warnings = await libraryService.refresh()
       const rootNodes = await loadRoots()
       set({
         rootNodes,
         treeChildren: {},
         expandedIds: [],
         isLoading: false,
+        // Мягкое предупреждение: Library остаётся usable.
+        error: warnings.length > 0 ? warnings.join(' · ') : null,
       })
       const selected = get().selectedNodeId
       if (selected) {
         await get().selectNode(selected)
+      } else if (rootNodes[0]) {
+        await get().selectNode(rootNodes[0].id)
       }
     } catch (error) {
       set({

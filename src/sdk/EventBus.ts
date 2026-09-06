@@ -4,6 +4,7 @@ export type PlatformEventMap = {
   LibraryUpdated: { sourceId: string }
   SourceEnabled: { sourceId: string }
   SourceDisabled: { sourceId: string }
+  SourceAuthenticated: { sourceId: string }
   DownloadFinished: { trackId: string; sourceId: string }
   MetadataUpdated: { trackId: string; sourceId: string }
   PluginRegistered: { pluginId: string }

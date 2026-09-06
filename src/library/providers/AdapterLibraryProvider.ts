@@ -28,7 +28,11 @@ export class AdapterLibraryProvider implements LibraryProvider {
   }
 
   async refresh(): Promise<void> {
-    await syncAdapterToMediaIndex(this.adapter)
+    try {
+      await syncAdapterToMediaIndex(this.adapter)
+    } catch {
+      // Не роняем Library из-за одного адаптера.
+    }
   }
 
   private async loadTracks(): Promise<Track[]> {
@@ -36,7 +40,11 @@ export class AdapterLibraryProvider implements LibraryProvider {
     await index.whenReady()
     let tracks = index.listTracks(this.id)
     if (tracks.length === 0) {
-      await syncAdapterToMediaIndex(this.adapter)
+      try {
+        await syncAdapterToMediaIndex(this.adapter)
+      } catch {
+        // keep empty / cached
+      }
       tracks = index.listTracks(this.id)
     }
     return tracks
