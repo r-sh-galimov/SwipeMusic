@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { getPlaybackIntent } from '../services/playbackIntent'
 import { usePlayerStore } from '../store/playerStore'
 import type { RepeatMode, ShuffleMode } from '../services/playbackQueue'
 
@@ -23,7 +24,6 @@ export default function QueuePage() {
   const playing = usePlayerStore((state) => state.playing)
   const repeatMode = usePlayerStore((state) => state.repeatMode)
   const shuffleMode = usePlayerStore((state) => state.shuffleMode)
-  const playTrack = usePlayerStore((state) => state.playTrack)
   const removeFromQueue = usePlayerStore((state) => state.removeFromQueue)
   const moveInQueue = usePlayerStore((state) => state.moveInQueue)
   const clearQueue = usePlayerStore((state) => state.clearQueue)
@@ -123,7 +123,7 @@ export default function QueuePage() {
                 type="button"
                 className="min-w-0 flex-1 text-left"
                 onClick={() => {
-                  void playTrack(track)
+                  void getPlaybackIntent().playFromQueue({ track })
                 }}
               >
                 <p className="truncate text-sm font-medium text-[var(--color-fg)]">

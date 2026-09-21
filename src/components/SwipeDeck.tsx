@@ -3,7 +3,6 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
-  useMemo,
   useRef,
   useState,
 } from 'react'
@@ -11,7 +10,7 @@ import { useSpring } from '@react-spring/web'
 import { useDrag } from '@use-gesture/react'
 import {
   defaultGestureConfig,
-  gestureActionLabels,
+  dragOverlayCaption,
   getDirectionFromMovement,
 } from '../config/gestureConfig'
 import {
@@ -19,11 +18,13 @@ import {
   SWIPE_FLY_DISTANCE,
   SWIPE_THRESHOLD,
 } from '../services/swipeEngine'
+import { classifySwipeTrack } from '../services/swipeClassification'
 import type { GestureConfig, SwipeDirection } from '../types/gesture'
 import type { SwipeAction } from '../types/swipe'
 import type { Track } from '../types/track'
 import { getSourceDisplayName } from '../utils/sourceDisplay'
 import SwipeCard from './SwipeCard'
+import { SwipeDirectionHints } from './SwipeDirectionHints'
 
 type PlaybackState = {
   currentTime: number
@@ -38,11 +39,14 @@ type SwipeDeckProps = {
   gestureConfig?: GestureConfig
   categoryResolveKey?: number
   categoryCancelKey?: number
+  /** Global Player → показать эту карточку, если трек есть в колоде. */
+  playerTrackId?: string | null
   onCategorize: (track: Track) => void
-  onLike: (track: Track) => void
-  onSkip?: (track: Track) => void
-  onPrevious?: (track: Track) => void
-  onCurrentTrackChange?: (track: Track | null) => void
+  /**
+   * После skip / previous / like колода сменила активный трек —
+   * Global Player должен переключиться на него.
+   */
+  onDeckNavigate: (track: Track) => void
   playback?: PlaybackState | null
 }
 
@@ -51,26 +55,23 @@ export type SwipeDeckHandle = {
   goPrevious: () => void
 }
 
+const SWIPE_COMMIT_MS = 180
+
 function flyTarget(direction: SwipeDirection) {
   switch (direction) {
     case 'right':
-      return { x: SWIPE_FLY_DISTANCE, y: 36, rot: 26 }
+      return { x: SWIPE_FLY_DISTANCE, y: 40, rot: 22 }
     case 'left':
-      return { x: -SWIPE_FLY_DISTANCE, y: 36, rot: -26 }
+      return { x: -SWIPE_FLY_DISTANCE, y: 40, rot: -22 }
     case 'up':
-      return { x: 0, y: -SWIPE_FLY_DISTANCE, rot: -6 }
+      return { x: 0, y: -SWIPE_FLY_DISTANCE, rot: -8 }
     case 'down':
-      return { x: 0, y: SWIPE_FLY_DISTANCE, rot: 6 }
+      return { x: 0, y: SWIPE_FLY_DISTANCE, rot: 8 }
   }
 }
 
-function directionHints(config: GestureConfig) {
-  return [
-    { dir: '←', action: config.left },
-    { dir: '↑', action: config.up },
-    { dir: '↓', action: config.down },
-    { dir: '→', action: config.right },
-  ] as const
+function clamp01(value: number): number {
+  return Math.min(Math.max(value, 0), 1)
 }
 
 const SwipeDeck = forwardRef<SwipeDeckHandle, SwipeDeckProps>(
@@ -80,31 +81,53 @@ const SwipeDeck = forwardRef<SwipeDeckHandle, SwipeDeckProps>(
       gestureConfig = defaultGestureConfig,
       categoryResolveKey = 0,
       categoryCancelKey = 0,
+      playerTrackId = null,
       onCategorize,
-      onLike,
-      onSkip,
-      onPrevious,
-      onCurrentTrackChange,
+      onDeckNavigate,
       playback = null,
     },
     ref,
   ) {
     const [index, setIndex] = useState(0)
-    const [hintAction, setHintAction] = useState<SwipeAction | null>(null)
+    const [dragDirection, setDragDirection] = useState<SwipeDirection | null>(
+      null,
+    )
+    const [dragProgress, setDragProgress] = useState(0)
     const lockedRef = useRef(false)
     const awaitingCategoryRef = useRef(false)
-    const pendingTrackRef = useRef<Track | null>(null)
     const prevResolveKeyRef = useRef(categoryResolveKey)
     const prevCancelKeyRef = useRef(categoryCancelKey)
     const indexRef = useRef(0)
+    const prevPlayerTrackIdRef = useRef<string | null>(null)
+    const commitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    /** Пропуск sync сразу после нашей навигации (player ещё догоняет). */
+    const ignorePlayerSyncRef = useRef(false)
 
     const current = tracks[index]
     const next = tracks[index + 1]
-    const hints = useMemo(() => directionHints(gestureConfig), [gestureConfig])
+    const playbackForCard =
+      playback && current && playerTrackId === current.id ? playback : null
+    const dragOverlayText =
+      dragDirection != null
+        ? dragOverlayCaption(dragDirection, gestureConfig)
+        : null
+
+    const clearDragVisual = useCallback(() => {
+      setDragDirection(null)
+      setDragProgress(0)
+    }, [])
 
     useEffect(() => {
       indexRef.current = index
     }, [index])
+
+    useEffect(() => {
+      return () => {
+        if (commitTimerRef.current) {
+          clearTimeout(commitTimerRef.current)
+        }
+      }
+    }, [])
 
     const [front, frontApi] = useSpring(() => ({
       x: 0,
@@ -122,43 +145,109 @@ const SwipeDeck = forwardRef<SwipeDeckHandle, SwipeDeckProps>(
       opacity: 1,
     }))
 
-    /** Жёсткий сброс — без «from: opacity 0», иначе после свайпа карточка остаётся невидимой. */
     const resetSprings = useCallback(() => {
       frontApi.set({ x: 0, y: 0, rot: 0, scale: 1, opacity: 1 })
       backApi.set({ x: 0, y: 14, rot: 0, scale: 0.96, opacity: 1 })
     }, [backApi, frontApi])
 
-    const goNext = useCallback(() => {
-      setHintAction(null)
-      lockedRef.current = false
-      awaitingCategoryRef.current = false
-      pendingTrackRef.current = null
-      resetSprings()
-      setIndex((value) => value + 1)
-    }, [resetSprings])
-
-    const goPrevious = useCallback(() => {
-      setHintAction(null)
-      lockedRef.current = false
-      if (indexRef.current <= 0) {
+    const jumpToIndex = useCallback(
+      (nextIndex: number, notifyPlayer: boolean) => {
+        clearDragVisual()
+        lockedRef.current = false
+        awaitingCategoryRef.current = false
         resetSprings()
+        indexRef.current = nextIndex
+        setIndex(nextIndex)
+
+        const track = tracks[nextIndex]
+        if (notifyPlayer && track) {
+          ignorePlayerSyncRef.current = true
+          onDeckNavigate(track)
+        }
+      },
+      [clearDragVisual, onDeckNavigate, resetSprings, tracks],
+    )
+
+    const goNext = useCallback(
+      (notifyPlayer: boolean) => {
+        const nextIndex = indexRef.current + 1
+        if (nextIndex >= tracks.length) {
+          lockedRef.current = false
+          clearDragVisual()
+          resetSprings()
+          setIndex(tracks.length)
+          indexRef.current = tracks.length
+          return
+        }
+        jumpToIndex(nextIndex, notifyPlayer)
+      },
+      [clearDragVisual, jumpToIndex, resetSprings, tracks.length],
+    )
+
+    const goPrevious = useCallback(
+      (notifyPlayer: boolean) => {
+        if (indexRef.current <= 0) {
+          lockedRef.current = false
+          clearDragVisual()
+          resetSprings()
+          return
+        }
+        jumpToIndex(indexRef.current - 1, notifyPlayer)
+      },
+      [clearDragVisual, jumpToIndex, resetSprings],
+    )
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        goNext: () => goNext(true),
+        goPrevious: () => goPrevious(true),
+      }),
+      [goNext, goPrevious],
+    )
+
+    /** Global Player → колода: текущий playing трек всегда на карточке (если есть в deck). */
+    useEffect(() => {
+      if (!playerTrackId || tracks.length === 0) {
+        prevPlayerTrackIdRef.current = playerTrackId
         return
       }
+
+      if (ignorePlayerSyncRef.current) {
+        ignorePlayerSyncRef.current = false
+        prevPlayerTrackIdRef.current = playerTrackId
+        return
+      }
+
+      const playerIndex = tracks.findIndex((track) => track.id === playerTrackId)
+      if (playerIndex < 0) {
+        prevPlayerTrackIdRef.current = playerTrackId
+        return
+      }
+
+      prevPlayerTrackIdRef.current = playerTrackId
+
+      if (playerIndex === indexRef.current) {
+        return
+      }
+
+      if (commitTimerRef.current) {
+        clearTimeout(commitTimerRef.current)
+        commitTimerRef.current = null
+      }
+
+      lockedRef.current = false
+      awaitingCategoryRef.current = false
+      clearDragVisual()
       resetSprings()
-      setIndex((value) => Math.max(0, value - 1))
-    }, [resetSprings])
-
-    useImperativeHandle(ref, () => ({ goNext, goPrevious }), [goNext, goPrevious])
-
-    useEffect(() => {
-      onCurrentTrackChange?.(current ?? null)
-    }, [current, onCurrentTrackChange])
+      indexRef.current = playerIndex
+      setIndex(playerIndex)
+    }, [playerTrackId, tracks, resetSprings, clearDragVisual])
 
     const restoreCurrent = useCallback(() => {
       awaitingCategoryRef.current = false
-      pendingTrackRef.current = null
       lockedRef.current = false
-      setHintAction(null)
+      clearDragVisual()
       resetSprings()
       void frontApi.start({
         x: 0,
@@ -166,26 +255,20 @@ const SwipeDeck = forwardRef<SwipeDeckHandle, SwipeDeckProps>(
         rot: 0,
         scale: 1,
         opacity: 1,
-        from: {
-          x: SWIPE_FLY_DISTANCE * 0.2,
-          y: 12,
-          rot: 8,
-          scale: 0.98,
-          opacity: 1,
-        },
         config: { tension: 280, friction: 22 },
       })
-    }, [frontApi, resetSprings])
+    }, [clearDragVisual, frontApi, resetSprings])
 
+    // После выбора категории — та же песня / та же карточка.
     useEffect(() => {
       if (prevResolveKeyRef.current === categoryResolveKey) {
         return
       }
       prevResolveKeyRef.current = categoryResolveKey
       if (awaitingCategoryRef.current) {
-        goNext()
+        restoreCurrent()
       }
-    }, [categoryResolveKey, goNext])
+    }, [categoryResolveKey, restoreCurrent])
 
     useEffect(() => {
       if (prevCancelKeyRef.current === categoryCancelKey) {
@@ -199,64 +282,73 @@ const SwipeDeck = forwardRef<SwipeDeckHandle, SwipeDeckProps>(
 
     const finishAction = useCallback(
       (action: SwipeAction, track: Track) => {
-        if (action === 'categorize') {
+        const result = classifySwipeTrack(track, action)
+
+        if (result.kind === 'needsCategory') {
           awaitingCategoryRef.current = true
-          pendingTrackRef.current = track
           onCategorize(track)
-          return
-        }
-
-        if (action === 'like') {
-          onLike(track)
-          goNext()
-          return
-        }
-
-        if (action === 'skip') {
-          onSkip?.(track)
-          goNext()
+          // Карточка уже улетела — ждём picker; затем restoreCurrent (та же песня).
           return
         }
 
         if (action === 'previous') {
-          onPrevious?.(track)
-          if (indexRef.current <= 0) {
-            restoreCurrent()
-            return
-          }
-          goPrevious()
+          goPrevious(true)
+          return
         }
+
+        // like / skip → следующая карточка + Global Player
+        goNext(true)
       },
-      [goNext, goPrevious, onCategorize, onLike, onPrevious, onSkip, restoreCurrent],
+      [goNext, goPrevious, onCategorize],
     )
 
     const bind = useDrag(
-      ({ active, movement: [mx, my], velocity: [vx, vy], cancel }) => {
+      ({ active, movement: [mx, my], velocity: [vx, vy], last }) => {
         if (!current || lockedRef.current || awaitingCategoryRef.current) {
           return
         }
 
-        const direction = getDirectionFromMovement(mx, my, SWIPE_THRESHOLD)
+        const progress = clamp01(Math.hypot(mx, my) / SWIPE_THRESHOLD)
+        const direction = getDirectionFromMovement(mx, my, 28)
         const decision = direction
           ? resolveSwipeAction({
               track: current,
               direction,
               gestureConfig,
-              deckIndex: index,
+              deckIndex: indexRef.current,
             })
           : null
-        setHintAction(active ? (decision?.action ?? null) : null)
 
-        const flick = Math.hypot(vx, vy) > 0.5
-        const shouldFly =
-          !active &&
-          decision !== null &&
-          (Math.abs(mx) > SWIPE_THRESHOLD ||
-            Math.abs(my) > SWIPE_THRESHOLD ||
-            (flick && (Math.abs(mx) > 50 || Math.abs(my) > 50)))
+        if (active) {
+          setDragDirection(direction)
+          setDragProgress(progress)
+          // Horizontal: лёгкий tilt; vertical: почти без rotation.
+          const horizontal = Math.abs(mx) >= Math.abs(my)
+          frontApi.set({
+            x: mx,
+            y: my,
+            rot: horizontal ? mx / 20 : my / 90,
+            scale: 1.03,
+            opacity: 1,
+          })
+          backApi.set({
+            scale: 0.97 + Math.min(Math.hypot(mx, my) / 1800, 0.03),
+            y: 14 - Math.min(Math.hypot(mx, my) / 40, 10),
+            opacity: 1,
+          })
+          return
+        }
 
-        if (shouldFly && decision) {
+        // Gesture ended
+        const flick = Math.hypot(vx, vy) > 0.35
+        const passed =
+          Math.abs(mx) > SWIPE_THRESHOLD ||
+          Math.abs(my) > SWIPE_THRESHOLD ||
+          (flick && (Math.abs(mx) > 32 || Math.abs(my) > 32))
+
+        if (last && decision && passed) {
           if (decision.action === 'previous' && !decision.canGoPrevious) {
+            clearDragVisual()
             void frontApi.start({
               x: 0,
               y: 0,
@@ -265,25 +357,23 @@ const SwipeDeck = forwardRef<SwipeDeckHandle, SwipeDeckProps>(
               opacity: 1,
               config: { tension: 320, friction: 24 },
             })
-            setHintAction(null)
             return
           }
 
           lockedRef.current = true
+          const action = decision.action
+          const track = decision.track
           const target = flyTarget(decision.direction)
-          cancel()
+          clearDragVisual()
 
           void frontApi.start({
             ...target,
             opacity: 0,
             scale: 1.04,
-            config: { tension: 170, friction: 16, clamp: true },
-            onRest: () => {
-              finishAction(decision.action, decision.track)
-            },
+            config: { tension: 180, friction: 18, clamp: true },
           })
 
-          if (decision.action !== 'categorize' && decision.action !== 'previous') {
+          if (action !== 'categorize' && action !== 'previous') {
             void backApi.start({
               y: 0,
               scale: 1,
@@ -291,27 +381,18 @@ const SwipeDeck = forwardRef<SwipeDeckHandle, SwipeDeckProps>(
               config: { tension: 240, friction: 20 },
             })
           }
+
+          if (commitTimerRef.current) {
+            clearTimeout(commitTimerRef.current)
+          }
+          commitTimerRef.current = setTimeout(() => {
+            commitTimerRef.current = null
+            finishAction(action, track)
+          }, SWIPE_COMMIT_MS)
           return
         }
 
-        if (active) {
-          void frontApi.start({
-            x: mx,
-            y: my,
-            rot: mx / 20 + my / 36,
-            scale: 1.03,
-            opacity: 1,
-            immediate: true,
-          })
-          void backApi.start({
-            scale: 0.97 + Math.min(Math.hypot(mx, my) / 1800, 0.03),
-            y: 14 - Math.min(Math.hypot(mx, my) / 40, 10),
-            opacity: 1,
-            immediate: true,
-          })
-          return
-        }
-
+        clearDragVisual()
         void frontApi.start({
           x: 0,
           y: 0,
@@ -357,7 +438,9 @@ const SwipeDeck = forwardRef<SwipeDeckHandle, SwipeDeckProps>(
             onClick={() => {
               lockedRef.current = false
               awaitingCategoryRef.current = false
+              clearDragVisual()
               resetSprings()
+              indexRef.current = 0
               setIndex(0)
             }}
           >
@@ -368,43 +451,45 @@ const SwipeDeck = forwardRef<SwipeDeckHandle, SwipeDeckProps>(
     }
 
     return (
-      <div className="relative mx-auto mb-10 h-[460px] max-h-[52vh] w-full max-w-sm overflow-hidden">
-        {next && (
-          <SwipeCard
-            key={`back-${next.id}`}
-            track={next}
-            sourceLabel={getSourceDisplayName(next.sourceId)}
-            x={back.x}
-            y={back.y}
-            rot={back.rot}
-            scale={back.scale}
-            opacity={back.opacity}
-            zIndex={1}
-          />
-        )}
-
-        <SwipeCard
-          key={`front-${current.id}`}
-          track={current}
-          sourceLabel={getSourceDisplayName(current.sourceId)}
-          x={front.x}
-          y={front.y}
-          rot={front.rot}
-          scale={front.scale}
-          opacity={front.opacity}
-          bind={() => bind()}
-          interactive
-          hintAction={hintAction}
-          zIndex={2}
-          playback={playback}
+      <div className="relative mx-auto mb-6 w-full max-w-sm px-[4.5rem] pb-8 pt-7">
+        <SwipeDirectionHints
+          gestureConfig={gestureConfig}
+          activeDirection={dragDirection}
+          progress={dragProgress}
         />
 
-        <div className="pointer-events-none absolute inset-x-0 -bottom-9 flex flex-wrap justify-center gap-x-5 gap-y-1 text-[11px] uppercase tracking-wide text-[var(--color-muted)]">
-          {hints.map((hint) => (
-            <span key={hint.dir}>
-              {hint.dir} {gestureActionLabels[hint.action]}
-            </span>
-          ))}
+        <div className="relative z-[1] h-[420px] max-h-[48vh] touch-none overflow-hidden">
+          {next && (
+            <SwipeCard
+              key={`back-${next.id}`}
+              track={next}
+              sourceLabel={getSourceDisplayName(next.sourceId)}
+              x={back.x}
+              y={back.y}
+              rot={back.rot}
+              scale={back.scale}
+              opacity={back.opacity}
+              zIndex={1}
+            />
+          )}
+
+          <SwipeCard
+            key={`front-${current.id}`}
+            track={current}
+            sourceLabel={getSourceDisplayName(current.sourceId)}
+            x={front.x}
+            y={front.y}
+            rot={front.rot}
+            scale={front.scale}
+            opacity={front.opacity}
+            bind={() => bind()}
+            interactive
+            dragOverlayText={dragOverlayText}
+            dragDirection={dragDirection}
+            dragProgress={dragProgress}
+            zIndex={2}
+            playback={playbackForCard}
+          />
         </div>
       </div>
     )

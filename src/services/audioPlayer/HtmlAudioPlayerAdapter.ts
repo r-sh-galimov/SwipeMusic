@@ -11,17 +11,35 @@ import type {
 export class HtmlAudioPlayerAdapter implements PlayerAdapter {
   private readonly audio: HTMLAudioElement
   private readonly listeners = new Set<(event: PlayerAdapterEvent) => void>()
+  private pollTimer: ReturnType<typeof setInterval> | null = null
+  /** Инкремент при каждом load — отменяет предыдущий await canplay. */
+  private loadGeneration = 0
 
   constructor() {
     this.audio = new Audio()
     this.audio.preload = 'metadata'
 
-    this.audio.addEventListener('play', () => this.emit('play'))
-    this.audio.addEventListener('pause', () => this.emit('pause'))
-    this.audio.addEventListener('ended', () => this.emit('ended'))
+    this.audio.addEventListener('play', () => {
+      this.startPolling()
+      this.emit('play')
+    })
+    this.audio.addEventListener('pause', () => {
+      this.stopPolling()
+      this.emit('pause')
+    })
+    this.audio.addEventListener('ended', () => {
+      this.stopPolling()
+      this.emit('ended')
+    })
     this.audio.addEventListener('timeupdate', () => this.emit('timeupdate'))
-    this.audio.addEventListener('loadedmetadata', () => this.emit('loadedmetadata'))
+    this.audio.addEventListener('loadedmetadata', () =>
+      this.emit('loadedmetadata'),
+    )
     this.audio.addEventListener('volumechange', () => this.emit('volumechange'))
+    this.audio.addEventListener('waiting', () => this.emit('waiting'))
+    this.audio.addEventListener('canplay', () => this.emit('canplay'))
+    this.audio.addEventListener('loadstart', () => this.emit('loadstart'))
+    this.audio.addEventListener('ratechange', () => this.emit('ratechange'))
     this.audio.addEventListener('error', () => {
       const mediaError = this.audio.error
       const message =
@@ -32,7 +50,18 @@ export class HtmlAudioPlayerAdapter implements PlayerAdapter {
   }
 
   async load(url: string): Promise<void> {
-    if (this.audio.src === url && !this.audio.error) {
+    const generation = ++this.loadGeneration
+
+    // Всегда останавливаем текущее воспроизведение до смены src.
+    this.audio.pause()
+    this.stopPolling()
+
+    const absolute =
+      typeof window !== 'undefined'
+        ? new URL(url, window.location.href).href
+        : url
+
+    if (this.audio.src === absolute && !this.audio.error) {
       return
     }
 
@@ -56,6 +85,12 @@ export class HtmlAudioPlayerAdapter implements PlayerAdapter {
       this.audio.addEventListener('canplay', onReady, { once: true })
       this.audio.addEventListener('error', onError, { once: true })
     })
+
+    if (generation !== this.loadGeneration) {
+      const error = new Error('Audio load aborted')
+      error.name = 'AbortError'
+      throw error
+    }
   }
 
   async play(): Promise<void> {
@@ -63,12 +98,17 @@ export class HtmlAudioPlayerAdapter implements PlayerAdapter {
   }
 
   pause(): void {
+    // Отменяем in-flight load, чтобы устаревший canplay не «успешно» завершил старый play().
+    this.loadGeneration += 1
     this.audio.pause()
+    this.stopPolling()
   }
 
   stop(): void {
+    this.loadGeneration += 1
     this.audio.pause()
     this.audio.currentTime = 0
+    this.stopPolling()
     this.emit('stop')
   }
 
@@ -84,6 +124,18 @@ export class HtmlAudioPlayerAdapter implements PlayerAdapter {
     this.audio.volume = Math.min(1, Math.max(0, volume))
   }
 
+  setMuted(muted: boolean): void {
+    this.audio.muted = muted
+    this.emit('volumechange')
+  }
+
+  setPlaybackRate(rate: number): void {
+    if (!Number.isFinite(rate) || rate <= 0) {
+      return
+    }
+    this.audio.playbackRate = rate
+  }
+
   getCurrentTime(): number {
     return this.audio.currentTime || 0
   }
@@ -96,6 +148,18 @@ export class HtmlAudioPlayerAdapter implements PlayerAdapter {
     return this.audio.volume
   }
 
+  getMuted(): boolean {
+    return this.audio.muted
+  }
+
+  getPlaybackRate(): number {
+    return this.audio.playbackRate || 1
+  }
+
+  isPlaying(): boolean {
+    return !this.audio.paused && !this.audio.ended
+  }
+
   subscribe(listener: (event: PlayerAdapterEvent) => void): () => void {
     this.listeners.add(listener)
     return () => {
@@ -104,10 +168,31 @@ export class HtmlAudioPlayerAdapter implements PlayerAdapter {
   }
 
   dispose(): void {
+    this.loadGeneration += 1
+    this.stopPolling()
     this.audio.pause()
     this.audio.removeAttribute('src')
     this.audio.load()
     this.listeners.clear()
+  }
+
+  private startPolling(): void {
+    if (this.pollTimer) {
+      return
+    }
+    this.pollTimer = setInterval(() => {
+      if (this.isPlaying()) {
+        this.emit('timeupdate')
+      }
+    }, 250)
+  }
+
+  private stopPolling(): void {
+    if (!this.pollTimer) {
+      return
+    }
+    clearInterval(this.pollTimer)
+    this.pollTimer = null
   }
 
   private emit(type: PlayerAdapterEventType, error?: string): void {
@@ -116,6 +201,8 @@ export class HtmlAudioPlayerAdapter implements PlayerAdapter {
       currentTime: this.getCurrentTime(),
       duration: this.getDuration(),
       volume: this.getVolume(),
+      muted: this.getMuted(),
+      playbackRate: this.getPlaybackRate(),
       error,
     }
 

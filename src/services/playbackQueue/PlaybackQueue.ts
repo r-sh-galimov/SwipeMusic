@@ -1,4 +1,9 @@
 import type { Track } from '../../types/track'
+import {
+  NONE_PLAYBACK_CONTEXT,
+  parsePlaybackContext,
+  type PlaybackContext,
+} from '../../types/playbackContext'
 
 export type RepeatMode = 'OFF' | 'ONE' | 'ALL'
 export type ShuffleMode = 'OFF' | 'ON'
@@ -15,6 +20,8 @@ export type PlaybackQueueSnapshot = {
   shuffleMode: ShuffleMode
   /** История track id для Previous после shuffle. */
   history: string[]
+  /** Provenance очереди (album / swipe / …). */
+  context: PlaybackContext
 }
 
 export type PlaybackQueueListener = (snapshot: PlaybackQueueSnapshot) => void
@@ -55,6 +62,7 @@ export class PlaybackQueue {
   private repeatMode: RepeatMode = 'OFF'
   private shuffleMode: ShuffleMode = 'OFF'
   private history: string[] = []
+  private context: PlaybackContext = NONE_PLAYBACK_CONTEXT
   private readonly listeners = new Set<PlaybackQueueListener>()
   private persistTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -79,7 +87,17 @@ export class PlaybackQueue {
       repeatMode: this.repeatMode,
       shuffleMode: this.shuffleMode,
       history: [...this.history],
+      context: this.context,
     }
+  }
+
+  getPlaybackContext(): PlaybackContext {
+    return this.context
+  }
+
+  setPlaybackContext(context: PlaybackContext): void {
+    this.context = context
+    this.emit()
   }
 
   /** Исходный порядок очереди (без shuffle). */
@@ -97,10 +115,22 @@ export class PlaybackQueue {
     return [...this.items]
   }
 
-  setQueue(tracks: Track[], startIndex = 0): void {
+  /**
+   * @param context — если передан, обновляет Playback Context.
+   *   Если не передан — сохраняет текущий context (навигация/внутренние вызовы).
+   */
+  setQueue(
+    tracks: Track[],
+    startIndex = 0,
+    context?: PlaybackContext,
+  ): void {
     const cleaned = tracks
       .filter((track) => Boolean(track.sourceId) || Boolean(track.id))
       .map(stripPreview)
+
+    if (context !== undefined) {
+      this.context = context
+    }
 
     this.items = cleaned
     if (cleaned.length === 0) {
@@ -225,6 +255,7 @@ export class PlaybackQueue {
     this.playOrder = []
     this.playOrderIndex = -1
     this.history = []
+    this.context = NONE_PLAYBACK_CONTEXT
     this.emit()
   }
 
@@ -458,7 +489,9 @@ export class PlaybackQueue {
       if (!raw) {
         return
       }
-      const data = JSON.parse(raw) as PlaybackQueueSnapshot
+      const data = JSON.parse(raw) as PlaybackQueueSnapshot & {
+        context?: unknown
+      }
       if (!Array.isArray(data.items)) {
         return
       }
@@ -471,6 +504,7 @@ export class PlaybackQueue {
       this.repeatMode = data.repeatMode ?? 'OFF'
       this.shuffleMode = data.shuffleMode ?? 'OFF'
       this.history = Array.isArray(data.history) ? data.history : []
+      this.context = parsePlaybackContext(data.context)
 
       if (this.items.length > 0 && this.currentIndex < 0) {
         this.currentIndex = 0

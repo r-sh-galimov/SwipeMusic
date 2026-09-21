@@ -75,6 +75,9 @@ export class SpotifyPlayerAdapter implements PlayerAdapter {
   private currentTimeSec = 0
   private durationSec = 0
   private volume = 0.8
+  private muted = false
+  private playbackRate = 1
+  private playing = false
   private readyPromise: Promise<void> | null = null
   private ticker: ReturnType<typeof setInterval> | null = null
   private endedEmitted = false
@@ -138,15 +141,20 @@ export class SpotifyPlayerAdapter implements PlayerAdapter {
       await this.player?.resume()
     }
 
+    this.playing = true
     this.startTicker()
     this.emit('play')
   }
 
-  pause(): void {
-    void this.player?.pause().then(() => {
-      this.stopTicker()
-      this.emit('pause')
-    })
+  async pause(): Promise<void> {
+    this.stopTicker()
+    this.playing = false
+    try {
+      await this.player?.pause()
+    } catch {
+      // Device/SDK может быть уже остановлен — не блокируем switch.
+    }
+    this.emit('pause')
   }
 
   /** Resume — alias play() без нового URI (контракт AudioPlayer.resume). */
@@ -156,6 +164,7 @@ export class SpotifyPlayerAdapter implements PlayerAdapter {
 
   stop(): void {
     void this.player?.pause().then(() => {
+      this.playing = false
       this.currentTimeSec = 0
       this.stopTicker()
       this.emit('stop')
@@ -175,9 +184,30 @@ export class SpotifyPlayerAdapter implements PlayerAdapter {
 
   setVolume(volume: number): void {
     this.volume = Math.min(1, Math.max(0, volume))
-    void this.player?.setVolume(this.volume).then(() => {
+    if (!this.muted) {
+      void this.player?.setVolume(this.volume).then(() => {
+        this.emit('volumechange')
+      })
+      return
+    }
+    this.emit('volumechange')
+  }
+
+  setMuted(muted: boolean): void {
+    this.muted = muted
+    const effective = muted ? 0 : this.volume
+    void this.player?.setVolume(effective).then(() => {
       this.emit('volumechange')
     })
+  }
+
+  setPlaybackRate(rate: number): void {
+    if (!Number.isFinite(rate) || rate <= 0) {
+      return
+    }
+    // Web Playback SDK не даёт playbackRate — храним для UI / единообразия API.
+    this.playbackRate = rate
+    this.emit('ratechange')
   }
 
   async next(): Promise<void> {
@@ -198,6 +228,18 @@ export class SpotifyPlayerAdapter implements PlayerAdapter {
 
   getVolume(): number {
     return this.volume
+  }
+
+  getMuted(): boolean {
+    return this.muted
+  }
+
+  getPlaybackRate(): number {
+    return this.playbackRate
+  }
+
+  isPlaying(): boolean {
+    return this.playing
   }
 
   subscribe(listener: (event: PlayerAdapterEvent) => void): () => void {
@@ -347,6 +389,7 @@ export class SpotifyPlayerAdapter implements PlayerAdapter {
     this.durationSec = state.duration / 1000
 
     if (state.paused) {
+      this.playing = false
       this.stopTicker()
       const nearEnd =
         state.duration > 0 && state.position >= state.duration - 800
@@ -359,6 +402,7 @@ export class SpotifyPlayerAdapter implements PlayerAdapter {
       return
     }
 
+    this.playing = true
     this.endedEmitted = false
     this.startTicker()
     this.emit('timeupdate')
@@ -378,7 +422,7 @@ export class SpotifyPlayerAdapter implements PlayerAdapter {
         this.durationSec = state.duration / 1000
         this.emit('timeupdate')
       })
-    }, 500)
+    }, 250)
   }
 
   private stopTicker(): void {
@@ -394,6 +438,8 @@ export class SpotifyPlayerAdapter implements PlayerAdapter {
       currentTime: this.getCurrentTime(),
       duration: this.getDuration(),
       volume: this.getVolume(),
+      muted: this.getMuted(),
+      playbackRate: this.getPlaybackRate(),
       error,
     }
     for (const listener of this.listeners) {

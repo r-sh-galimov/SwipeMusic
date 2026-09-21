@@ -56,9 +56,10 @@ export default function CategoryPickerSheet({
           onCancel={() => setMode('list')}
           onSubmit={(input) => {
             const category = onCreateCategory(input)
+            // Сначала выбираем (assign + закрытие sheet), режим сбрасываем на всякий случай.
+            onSelect(category.id)
             setMode('list')
             setQuery('')
-            onSelect(category.id)
           }}
         />
       ) : (

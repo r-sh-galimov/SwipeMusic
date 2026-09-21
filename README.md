@@ -37,12 +37,15 @@ npm run preview
 - **Spotify** — полноценный Provider (OAuth PKCE, library sync → MediaIndex, search, preview stream). Настройка: `VITE_SPOTIFY_CLIENT_ID` в `.env` (см. `.env.example`). Подключение на `/sources`.
 - **Library** (`src/library`) — `LibraryProvider` + `LibraryService` + дерево узлов; UI не знает Spotify/Local/Zaycev. Новый источник = `MusicSourceAdapter` + `LibraryProvider` (+ `registerPlugin`).
 - **Collection Engine** (`src/services/collectionEngine`) — пользовательская база Track-снимков + статистика, независимо от источников.
-- **Audio Player** (`src/services/audioPlayer`) — `PlayerAdapter` → `AudioPlayer` → `playerStore`. Порядок — `PlaybackQueue`.
+- **Audio Player** (`src/services/audioPlayer`) — `PlayerAdapter` → `AudioPlayer` → `playerStore` / `useGlobalPlayerStore`. Порядок — `PlaybackQueue`. Единый singleton Audio.
+- **Global Bottom Player** (`src/components/player/BottomPlayer.tsx`) — persistent панель в `MainLayout` (вне маршрутов): seek/drag, volume/mute, repeat/shuffle, rate, hotkeys. Навигация не останавливает воспроизведение.
 - **Playback Queue** (`src/services/playbackQueue`) — единственный порядок воспроизведения; Repeat/Shuffle; persist; UI `/queue`.
 - **PlayerManager** (`src/services/audioPlayer`) — маршрутизация `LocalPlayerAdapter` / `SpotifyPlayerAdapter` (Web Playback SDK) по `sourceId` / URI; UI не знает провайдера.
 - **PlaybackResolver** (`src/services/playbackResolver`) — выбор лучшего `PlaybackCandidate` (local / stream / preview); Player получает только URL. См. [docs/playback-resolver.md](docs/playback-resolver.md).
 - **Store** (`src/store`) — коллекция, категории, история, плеер и список источников.
 
 Правила (`Rule`) пока только как модель — логика автокатегоризации будет позже.
+
+Монетизация — организация библиотеки, не продажа музыки: подписка, разовая локальная покупка, рабочие места. См. [docs/monetization.md](docs/monetization.md).
 
 Экран источников: `/sources` (ссылка из Профиля).

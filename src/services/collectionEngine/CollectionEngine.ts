@@ -198,6 +198,34 @@ export class CollectionEngine {
     return updated
   }
 
+  setDisliked(
+    trackId: string,
+    disliked: boolean,
+    track?: Track,
+  ): CollectionTrackData | null {
+    let existing = this.storage.getTrack(trackId)
+    if (!existing && track) {
+      existing = this.addTrack(track)
+    }
+    if (!existing) {
+      return null
+    }
+
+    if (existing.disliked === disliked) {
+      return existing
+    }
+
+    const updated: CollectionTrackData = {
+      ...existing,
+      disliked,
+      liked: disliked ? false : existing.liked,
+    }
+    this.storage.upsertTrack(updated)
+    this.log(disliked ? 'disliked' : 'unliked', trackId, existing.sourceId)
+    this.emit()
+    return updated
+  }
+
   toggleFavorite(trackId: string, track?: Track): CollectionTrackData | null {
     let existing = this.storage.getTrack(trackId)
     if (!existing && track) {

@@ -18,6 +18,7 @@ type CollectionEngineStore = {
   removeCategory: (trackId: string, categoryId: string) => void
   toggleLike: (trackId: string, track?: Track) => void
   setLiked: (trackId: string, liked: boolean, track?: Track) => void
+  setDisliked: (trackId: string, disliked: boolean, track?: Track) => void
   toggleFavorite: (trackId: string, track?: Track) => void
   markPlayed: (trackId: string, track?: Track) => void
   markSkipped: (trackId: string, track?: Track) => void
@@ -70,6 +71,9 @@ export const useCollectionEngineStore = create<CollectionEngineStore>((set) => {
     },
     setLiked: (trackId, liked, track) => {
       engine.setLiked(trackId, liked, track)
+    },
+    setDisliked: (trackId, disliked, track) => {
+      engine.setDisliked(trackId, disliked, track)
     },
     toggleFavorite: (trackId, track) => {
       engine.toggleFavorite(trackId, track)

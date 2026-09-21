@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { AlbumModeBanner } from '../components/AlbumModeBanner'
 import CategoryPickerSheet from '../components/CategoryPickerSheet'
-import PlaybackControls from '../components/PlaybackControls'
-import SwipeDeck, { type SwipeDeckHandle } from '../components/SwipeDeck'
+import SwipeDeck from '../components/SwipeDeck'
 import { useSwipeFeed } from '../hooks/useSwipeFeed'
+import { getPlaybackIntent } from '../services/playbackIntent'
 import { useCollectionEngineStore } from '../store/collectionEngineStore'
 import { useCollectionStore } from '../store/collectionStore'
 import { usePlayerStore } from '../store/playerStore'
 import { useSwipeDeckSessionStore } from '../store/swipeDeckSessionStore'
+import { isQueueLockedContext } from '../types/playbackContext'
 import type { Track } from '../types/track'
 
 export default function Home() {
@@ -18,53 +20,65 @@ export default function Home() {
   const assignTrackToCategory = useCollectionStore(
     (state) => state.assignTrackToCategory,
   )
-  const likeTrack = useCollectionStore((state) => state.likeTrack)
-  const pushViewedTrack = useCollectionStore((state) => state.pushViewedTrack)
   const recordHistory = useCollectionStore((state) => state.recordHistory)
 
   const collectionAssignCategory = useCollectionEngineStore(
     (state) => state.assignCategory,
   )
-  const collectionSetLiked = useCollectionEngineStore((state) => state.setLiked)
-  const collectionMarkSkipped = useCollectionEngineStore(
-    (state) => state.markSkipped,
-  )
-  const collectionMarkPlayed = useCollectionEngineStore((state) => state.markPlayed)
 
   const setQueue = usePlayerStore((state) => state.setQueue)
-  const playTrack = usePlayerStore((state) => state.playTrack)
   const currentTime = usePlayerStore((state) => state.currentTime)
   const duration = usePlayerStore((state) => state.duration)
   const playerError = usePlayerStore((state) => state.error)
   const seek = usePlayerStore((state) => state.seek)
   const currentTrack = usePlayerStore((state) => state.currentTrack)
+  const pendingPlaybackTrack = usePlayerStore((state) => state.pendingTrack)
+  const playbackContext = usePlayerStore((state) => state.playbackContext)
+  const queueLocked = isQueueLockedContext(playbackContext)
 
-  const deckRef = useRef<SwipeDeckHandle>(null)
   const [pendingTrack, setPendingTrack] = useState<Track | null>(null)
   const [categoryResolveKey, setCategoryResolveKey] = useState(0)
   const [categoryCancelKey, setCategoryCancelKey] = useState(0)
 
   useEffect(() => {
-    if (tracks.length > 0) {
-      setQueue(tracks, 0)
+    if (queueLocked) {
+      return
     }
-  }, [tracks, setQueue])
+    if (tracks.length === 0) {
+      return
+    }
+    if (usePlayerStore.getState().queue.length > 0) {
+      return
+    }
+    setQueue(tracks, 0, { type: 'swipe' })
+  }, [tracks, setQueue, queueLocked])
 
-  const handleCurrentTrackChange = useCallback(
-    (track: Track | null) => {
-      if (!track) {
+  const playDeckTrack = useCallback(
+    (track: Track) => {
+      const startIndex = tracks.findIndex((item) => item.id === track.id)
+      if (startIndex < 0) {
         return
       }
-      void playTrack(track)
-        .then(() => {
-          collectionMarkPlayed(track.id, track)
+      void getPlaybackIntent()
+        .playFromSwipe({
+          tracks,
+          startIndex,
+          explicitUserPlay: true,
         })
         .catch(() => {
-          // Автоплей может быть заблокирован до жеста пользователя — это нормально.
+          // resolve / autoplay — BottomPlayer
         })
     },
-    [collectionMarkPlayed, playTrack],
+    [tracks],
   )
+
+  const exitAlbumMode = useCallback(() => {
+    const playerState = usePlayerStore.getState()
+    getPlaybackIntent().exitAlbumMode({
+      swipeTracks: tracks,
+      currentTrack: playerState.pendingTrack ?? playerState.currentTrack,
+    })
+  }, [tracks])
 
   const deckKey =
     mode === 'search'
@@ -77,7 +91,7 @@ export default function Home() {
         <p className="text-sm text-[var(--color-muted)]">
           {mode === 'search' && searchQuery
             ? `Результаты: «${searchQuery}»`
-            : 'Слушай и раскладывай треки свайпами'}
+            : 'Свайп оценивает трек. Дальше / Назад также переключают плеер.'}
         </p>
         <div className="flex flex-wrap items-center justify-center gap-3 sm:justify-start">
           <h1 className="font-display text-2xl font-semibold tracking-tight text-[var(--color-fg)] sm:text-3xl">
@@ -95,6 +109,14 @@ export default function Home() {
         </div>
       </div>
 
+      {playbackContext.type === 'album' ? (
+        <AlbumModeBanner
+          title={playbackContext.title}
+          artist={playbackContext.artist}
+          onExit={exitAlbumMode}
+        />
+      ) : null}
+
       {isLoading ? (
         <p className="py-20 text-center text-sm text-[var(--color-muted)]">
           Загрузка коллекции…
@@ -102,47 +124,25 @@ export default function Home() {
       ) : error ? (
         <p className="py-20 text-center text-sm text-rose-600">{error}</p>
       ) : (
-        <div className="space-y-6">
-          <SwipeDeck
-            key={deckKey}
-            ref={deckRef}
-            tracks={tracks}
-            gestureConfig={gestureConfig}
-            categoryResolveKey={categoryResolveKey}
-            categoryCancelKey={categoryCancelKey}
-            playback={{
-              currentTime,
-              duration,
-              canSeek: Boolean(currentTrack),
-              onSeek: seek,
-              error: playerError,
-            }}
-            onCurrentTrackChange={handleCurrentTrackChange}
-            onCategorize={(track) => {
-              pushViewedTrack(track.id)
-              setPendingTrack(track)
-            }}
-            onLike={(track) => {
-              pushViewedTrack(track.id)
-              likeTrack(track.id)
-              recordHistory({ track, action: 'like' })
-              collectionSetLiked(track.id, true, track)
-            }}
-            onSkip={(track) => {
-              pushViewedTrack(track.id)
-              recordHistory({ track, action: 'skip' })
-              collectionMarkSkipped(track.id, track)
-            }}
-            onPrevious={(track) => {
-              recordHistory({ track, action: 'previous' })
-            }}
-          />
-
-          <PlaybackControls
-            onPreviousTrack={() => deckRef.current?.goPrevious()}
-            onNextTrack={() => deckRef.current?.goNext()}
-          />
-        </div>
+        <SwipeDeck
+          key={deckKey}
+          tracks={tracks}
+          gestureConfig={gestureConfig}
+          categoryResolveKey={categoryResolveKey}
+          categoryCancelKey={categoryCancelKey}
+          playerTrackId={(pendingPlaybackTrack ?? currentTrack)?.id ?? null}
+          playback={{
+            currentTime,
+            duration,
+            canSeek: Boolean(currentTrack),
+            onSeek: seek,
+            error: playerError,
+          }}
+          onDeckNavigate={playDeckTrack}
+          onCategorize={(track) => {
+            setPendingTrack(track)
+          }}
+        />
       )}
 
       <CategoryPickerSheet
@@ -159,7 +159,9 @@ export default function Home() {
             return
           }
 
-          const category = categories.find((item) => item.id === categoryId)
+          const category = useCollectionStore
+            .getState()
+            .categories.find((item) => item.id === categoryId)
           assignTrackToCategory(pendingTrack.id, categoryId)
           recordHistory({
             track: pendingTrack,

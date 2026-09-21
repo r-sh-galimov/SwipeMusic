@@ -40,3 +40,21 @@ export function getActionForDirection(
 ): SwipeAction {
   return config[direction]
 }
+
+/** Подпись overlay на карточке во время drag. */
+export function dragOverlayCaption(
+  direction: SwipeDirection,
+  config: GestureConfig = defaultGestureConfig,
+): string {
+  const label = gestureActionLabels[config[direction]]
+  switch (direction) {
+    case 'right':
+      return `${label} →`
+    case 'left':
+      return `← ${label}`
+    case 'up':
+      return `↑ ${label}`
+    case 'down':
+      return `↓ ${label}`
+  }
+}

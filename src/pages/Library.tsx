@@ -5,12 +5,17 @@ import { LibraryBreadcrumb } from '../components/library/LibraryBreadcrumb'
 import { LibraryContentTable } from '../components/library/LibraryContentTable'
 import { LibraryTree } from '../components/library/LibraryTree'
 import { TrackActionSheet } from '../components/library/TrackActionSheet'
+import {
+  getPlaybackIntent,
+  playLibrarySelection,
+} from '../services/playbackIntent'
 import { useCollectionEngineStore } from '../store/collectionEngineStore'
 import { useCollectionStore } from '../store/collectionStore'
 import { useLibraryUiStore } from '../store/libraryUiStore'
 import { usePlayerStore } from '../store/playerStore'
 import { useSwipeDeckSessionStore } from '../store/swipeDeckSessionStore'
 import type { Track } from '../types/track'
+import { resolveLibraryPlaybackContext } from '../utils/resolveLibraryPlaybackContext'
 
 export default function Library() {
   const navigate = useNavigate()
@@ -51,8 +56,6 @@ export default function Library() {
   const setLiked = useCollectionEngineStore((state) => state.setLiked)
   const toggleFavorite = useCollectionEngineStore((state) => state.toggleFavorite)
   const assignCategory = useCollectionEngineStore((state) => state.assignCategory)
-  const playTrack = usePlayerStore((state) => state.playTrack)
-  const setQueue = usePlayerStore((state) => state.setQueue)
   const insertNext = usePlayerStore((state) => state.insertNext)
   const appendToQueue = usePlayerStore((state) => state.appendToQueue)
   const setShuffleMode = usePlayerStore((state) => state.setShuffleMode)
@@ -81,12 +84,23 @@ export default function Library() {
   }, [selectAllTracks])
 
   const rows = searchResults.length > 0 ? searchResults : tracks
+  const fromSearch = searchResults.length > 0
+
+  const playbackContextForRows = (sampleTrack?: Track | null) =>
+    resolveLibraryPlaybackContext({
+      breadcrumb,
+      selectedNodeId,
+      searchQuery,
+      fromSearch,
+      sampleTrack,
+    })
 
   const playFromRows = (track: Track) => {
     const list = rows.map((row) => row.track)
     const index = list.findIndex((item) => item.id === track.id)
-    setQueue(list, index >= 0 ? index : 0)
-    void playTrack(track)
+    const startIndex = index >= 0 ? index : 0
+    const context = playbackContextForRows(track)
+    void playLibrarySelection({ tracks: list, startIndex, context })
   }
 
   const providerLabelById = useMemo(() => {
@@ -106,7 +120,26 @@ export default function Library() {
     if (selected.length === 0) {
       return
     }
-    applyLibraryDeck(selected, { query: 'Библиотека' })
+
+    const focusId = trackIds?.length === 1 ? trackIds[0] : selected[0]?.id
+    applyLibraryDeck(selected, {
+      query: 'Библиотека',
+      selectedTrackId: focusId,
+    })
+
+    const deck = useSwipeDeckSessionStore.getState().tracks
+    if (deck && deck.length > 0) {
+      void getPlaybackIntent()
+        .playFromSwipe({
+          tracks: deck,
+          startIndex: 0,
+          explicitUserPlay: true,
+        })
+        .catch(() => {
+          // resolve / autoplay — BottomPlayer
+        })
+    }
+
     navigate('/')
   }
 
@@ -295,9 +328,12 @@ export default function Library() {
               const queueTracks = rows
                 .filter((row) => selectedTrackIds.includes(row.track.id))
                 .map((row) => row.track)
-              setQueue(queueTracks, 0)
               if (queueTracks[0]) {
-                void playTrack(queueTracks[0])
+                void playLibrarySelection({
+                  tracks: queueTracks,
+                  startIndex: 0,
+                  context: playbackContextForRows(queueTracks[0]),
+                })
               }
               clearTrackSelection()
             }}
@@ -344,11 +380,15 @@ export default function Library() {
         }}
         onShuffle={() => {
           const list = rows.map((row) => row.track)
-          setQueue(list, 0)
-          setShuffleMode('ON')
-          if (list[0]) {
-            void playTrack(list[0])
+          if (!list[0]) {
+            return
           }
+          setShuffleMode('ON')
+          void playLibrarySelection({
+            tracks: list,
+            startIndex: 0,
+            context: playbackContextForRows(list[0]),
+          })
         }}
         onOpenInSwipes={() => {
           if (actionRow) {

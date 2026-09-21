@@ -22,15 +22,22 @@ export default function CreateCategoryForm({
   const [color, setColor] = useState(categoryColorOptions[4])
   const [icon, setIcon] = useState<CategoryIconId>('music')
 
+  const submit = () => {
+    const trimmed = name.trim()
+    if (!trimmed) {
+      return
+    }
+    onSubmit({ name: trimmed, color, icon })
+  }
+
   return (
     <form
       className="space-y-4"
       onSubmit={(event) => {
+        // Без preventDefault браузер делает GET на текущий URL и сбрасывает in-memory store.
         event.preventDefault()
-        if (!name.trim()) {
-          return
-        }
-        onSubmit({ name: name.trim(), color, icon })
+        event.stopPropagation()
+        submit()
       }}
     >
       <label className="block space-y-1.5">
@@ -100,8 +107,9 @@ export default function CreateCategoryForm({
           Отмена
         </button>
         <button
-          type="submit"
+          type="button"
           disabled={!name.trim()}
+          onClick={submit}
           className="flex-1 rounded-xl bg-[var(--color-accent)] px-3 py-2.5 text-sm font-medium text-white disabled:opacity-40"
         >
           Создать

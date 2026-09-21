@@ -39,22 +39,22 @@ export class PlayerManager implements PlayerAdapter {
   }
 
   /** Выбор по sourceId трека (без if в UI). */
-  activateForSource(sourceId: string): void {
+  async activateForSource(sourceId: string): Promise<void> {
     const next = this.bySourceId.get(sourceId) ?? this.local
     if (next === this.active) {
       return
     }
-    this.active.pause()
+    await Promise.resolve(this.active.pause())
     this.bindActive(next)
   }
 
   /** Выбор по playback URL (spotify: → SDK, иначе HTMLAudio). */
-  activateForUrl(url: string): void {
+  async activateForUrl(url: string): Promise<void> {
     if (this.spotify.canHandleUrl(url)) {
-      this.activateForSource(this.spotify.sourceId)
+      await this.activateForSource(this.spotify.sourceId)
       return
     }
-    this.activateForSource(this.local.sourceId)
+    await this.activateForSource(this.local.sourceId)
   }
 
   getActiveSourceId(): string {
@@ -101,7 +101,10 @@ export class PlayerManager implements PlayerAdapter {
   }
 
   async load(url: string): Promise<void> {
-    this.activateForUrl(url)
+    // Сначала дожидаемся pause обоих backends — иначе Spotify SDK
+    // может ещё играть, пока Local уже load/play.
+    await this.pause()
+    await this.activateForUrl(url)
     await this.active.load(url)
   }
 
@@ -109,12 +112,16 @@ export class PlayerManager implements PlayerAdapter {
     await this.active.play()
   }
 
-  pause(): void {
-    this.active.pause()
+  async pause(): Promise<void> {
+    await Promise.all([
+      Promise.resolve(this.local.pause()),
+      Promise.resolve(this.spotify.pause()),
+    ])
   }
 
   stop(): void {
-    this.active.stop()
+    this.local.stop()
+    this.spotify.stop()
   }
 
   seek(timeSeconds: number): void {
@@ -132,6 +139,20 @@ export class PlayerManager implements PlayerAdapter {
     }
   }
 
+  setMuted(muted: boolean): void {
+    this.active.setMuted(muted)
+    if (this.active !== this.local) {
+      this.local.setMuted(muted)
+    }
+    if (this.active !== this.spotify) {
+      this.spotify.setMuted(muted)
+    }
+  }
+
+  setPlaybackRate(rate: number): void {
+    this.active.setPlaybackRate(rate)
+  }
+
   getCurrentTime(): number {
     return this.active.getCurrentTime()
   }
@@ -142,6 +163,18 @@ export class PlayerManager implements PlayerAdapter {
 
   getVolume(): number {
     return this.active.getVolume()
+  }
+
+  getMuted(): boolean {
+    return this.active.getMuted()
+  }
+
+  getPlaybackRate(): number {
+    return this.active.getPlaybackRate()
+  }
+
+  isPlaying(): boolean {
+    return this.active.isPlaying()
   }
 
   subscribe(listener: (event: PlayerAdapterEvent) => void): () => void {

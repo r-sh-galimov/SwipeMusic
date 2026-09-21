@@ -21,11 +21,10 @@ const navItems: {
 export default function BottomNav() {
   return (
     <nav
-      className="fixed inset-x-0 bottom-0 z-20 border-t border-[var(--color-border)] bg-[var(--color-nav)]/95 backdrop-blur-md"
+      className="border-t border-[var(--color-border)] bg-[var(--color-nav)]/95 backdrop-blur-md"
       aria-label="Основная навигация"
-      style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
-      <ul className="mx-auto flex h-16 max-w-2xl items-stretch justify-between px-1 sm:px-2">
+      <ul className="mx-auto flex h-14 max-w-2xl items-stretch justify-between px-1 sm:h-16 sm:px-2">
         {navItems.map(({ to, label, Icon, end }) => (
           <li key={to} className="flex-1">
             <NavLink

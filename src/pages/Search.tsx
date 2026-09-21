@@ -2,6 +2,7 @@ import type { FormEvent } from 'react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { DevSearchLogPanel } from '../components/DevSearchLogPanel'
+import { getPlaybackIntent } from '../services/playbackIntent'
 import { useSearchStore } from '../store/searchStore'
 import { useSwipeDeckSessionStore } from '../store/swipeDeckSessionStore'
 import type { Track } from '../types/track'
@@ -27,6 +28,20 @@ export default function Search() {
       selectedTrackId,
       query: q ?? query,
     })
+
+    const deck = useSwipeDeckSessionStore.getState().tracks
+    if (deck && deck.length > 0) {
+      void getPlaybackIntent()
+        .playFromSwipe({
+          tracks: deck,
+          startIndex: 0,
+          explicitUserPlay: true,
+        })
+        .catch(() => {
+          // resolve / autoplay — BottomPlayer
+        })
+    }
+
     navigate('/')
   }
 

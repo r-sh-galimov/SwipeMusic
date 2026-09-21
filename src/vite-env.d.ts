@@ -24,6 +24,13 @@ interface FileSystemHandle {
   ): Promise<PermissionState>
 }
 
+/** Async iterators каталога — есть в браузерах, но не во всех DOM typings TS. */
+interface FileSystemDirectoryHandle {
+  values(): AsyncIterableIterator<FileSystemHandle>
+  entries(): AsyncIterableIterator<[string, FileSystemHandle]>
+  keys(): AsyncIterableIterator<string>
+}
+
 interface DirectoryPickerOptions {
   id?: string
   mode?: 'read' | 'readwrite'
