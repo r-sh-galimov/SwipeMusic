@@ -1,11 +1,21 @@
+import type { SyntheticEvent } from 'react'
 import { animated } from '@react-spring/web'
 import type { SpringValue } from '@react-spring/web'
-import { gestureActionLabels } from '../config/gestureConfig'
-import type { GestureAction } from '../types/gesture'
+import type { SwipeDirection } from '../types/gesture'
 import type { Track } from '../types/track'
+import { formatPlaybackTime } from '../utils/formatTime'
+
+type PlaybackOverlay = {
+  currentTime: number
+  duration: number
+  canSeek: boolean
+  onSeek: (timeSeconds: number) => void
+  error?: string | null
+}
 
 type SwipeCardProps = {
   track: Track
+  sourceLabel: string
   x: SpringValue<number>
   y: SpringValue<number>
   rot: SpringValue<number>
@@ -13,19 +23,36 @@ type SwipeCardProps = {
   opacity?: SpringValue<number>
   bind?: () => Record<string, unknown>
   interactive?: boolean
-  hintAction?: GestureAction | null
+  /** Подпись overlay во время drag (например «← Лайк»). */
+  dragOverlayText?: string | null
+  dragDirection?: SwipeDirection | null
+  /** 0–1 к commit threshold. */
+  dragProgress?: number
   zIndex?: number
+  playback?: PlaybackOverlay | null
 }
 
-const hintStyles: Record<GestureAction, string> = {
-  categorize: 'border-teal-500 text-teal-700 bg-teal-500/15',
-  like: 'border-rose-500 text-rose-600 bg-rose-500/15',
-  skip: 'border-sky-500 text-sky-700 bg-sky-500/15',
-  previous: 'border-amber-500 text-amber-700 bg-amber-500/15',
+const overlayTone: Record<SwipeDirection, string> = {
+  right: 'border-teal-400/80 bg-teal-500/25 text-teal-50',
+  left: 'border-rose-400/80 bg-rose-500/25 text-rose-50',
+  up: 'border-sky-400/80 bg-sky-500/25 text-sky-50',
+  down: 'border-amber-400/80 bg-amber-500/25 text-amber-50',
+}
+
+const overlayEdge: Record<SwipeDirection, string> = {
+  right: 'right-3 top-1/2 -translate-y-1/2',
+  left: 'left-3 top-1/2 -translate-y-1/2',
+  up: 'left-1/2 top-4 -translate-x-1/2',
+  down: 'bottom-4 left-1/2 -translate-x-1/2',
+}
+
+function stopSeekGesture(event: SyntheticEvent) {
+  event.stopPropagation()
 }
 
 export default function SwipeCard({
   track,
+  sourceLabel,
   x,
   y,
   rot,
@@ -33,14 +60,25 @@ export default function SwipeCard({
   opacity,
   bind,
   interactive = false,
-  hintAction = null,
+  dragOverlayText = null,
+  dragDirection = null,
+  dragProgress = 0,
   zIndex = 1,
+  playback = null,
 }: SwipeCardProps) {
+  const progressMax = playback && playback.duration > 0 ? playback.duration : 0
+  const showOverlay =
+    interactive && Boolean(dragOverlayText) && Boolean(dragDirection)
+  const ready = dragProgress >= 1
+  const overlayOpacity = Math.min(0.35 + dragProgress * 0.65, 1)
+
   return (
     <animated.article
       {...(interactive && bind ? bind() : {})}
-      className={`absolute inset-0 touch-none select-none will-change-transform ${
-        interactive ? 'cursor-grab active:cursor-grabbing' : 'pointer-events-none'
+      className={`absolute inset-0 select-none will-change-transform ${
+        interactive
+          ? 'touch-none cursor-grab active:cursor-grabbing'
+          : 'pointer-events-none'
       }`}
       style={{
         x,
@@ -49,6 +87,7 @@ export default function SwipeCard({
         scale,
         opacity,
         zIndex,
+        touchAction: interactive ? 'none' : undefined,
       }}
     >
       <div className="flex h-full flex-col overflow-hidden rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[0_18px_50px_-28px_rgba(20,33,43,0.55)]">
@@ -56,7 +95,9 @@ export default function SwipeCard({
           className="relative min-h-0 flex-1 bg-[var(--color-accent)]"
           style={{
             backgroundColor: track.coverColor ?? undefined,
-            backgroundImage: track.coverUrl ? `url(${track.coverUrl})` : undefined,
+            backgroundImage: track.coverUrl
+              ? `url(${track.coverUrl})`
+              : undefined,
             backgroundSize: 'cover',
             backgroundPosition: 'center',
           }}
@@ -64,22 +105,63 @@ export default function SwipeCard({
           <div className="absolute inset-0 bg-gradient-to-br from-white/25 via-transparent to-black/35" />
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.28),transparent_45%)]" />
 
-          {interactive && hintAction && (
+          {showOverlay && dragDirection ? (
             <div
-              className={`absolute left-1/2 top-6 -translate-x-1/2 rounded-xl border-2 px-4 py-1.5 text-sm font-bold uppercase tracking-wider backdrop-blur-sm ${hintStyles[hintAction]}`}
+              className={`pointer-events-none absolute z-10 rounded-xl border px-3 py-1.5 text-sm font-bold tracking-wide backdrop-blur-md ${overlayTone[dragDirection]} ${overlayEdge[dragDirection]} ${
+                ready ? 'ring-2 ring-white/40' : ''
+              }`}
+              style={{ opacity: overlayOpacity }}
+              aria-live="polite"
             >
-              {gestureActionLabels[hintAction]}
+              {dragOverlayText}
             </div>
-          )}
+          ) : null}
         </div>
 
-        <div className="space-y-1 px-5 py-4">
-          <h2 className="truncate text-xl font-semibold tracking-tight text-[var(--color-fg)]">
-            {track.title}
-          </h2>
-          <p className="truncate text-sm text-[var(--color-muted)]">
-            {track.artist}
-          </p>
+        <div className="space-y-3 px-5 py-4">
+          <div className="space-y-1">
+            <h2 className="truncate text-xl font-semibold tracking-tight text-[var(--color-fg)]">
+              {track.title}
+            </h2>
+            <p className="truncate text-sm text-[var(--color-muted)]">
+              {track.artist}
+            </p>
+            <p className="truncate text-xs font-medium uppercase tracking-wide text-[var(--color-accent)]">
+              {sourceLabel}
+            </p>
+          </div>
+
+          {playback ? (
+            <div
+              className="space-y-1.5 touch-auto"
+              style={{ touchAction: 'auto' }}
+              onPointerDown={stopSeekGesture}
+              onPointerUp={stopSeekGesture}
+            >
+              <input
+                type="range"
+                min={0}
+                max={progressMax || 1}
+                step={0.1}
+                value={Math.min(playback.currentTime, progressMax || 1)}
+                disabled={!playback.canSeek || progressMax <= 0}
+                onChange={(event) =>
+                  playback.onSeek(Number(event.target.value))
+                }
+                className="w-full accent-[var(--color-accent)]"
+                aria-label="Позиция воспроизведения"
+              />
+              <div className="flex justify-between text-xs text-[var(--color-muted)]">
+                <span>{formatPlaybackTime(playback.currentTime)}</span>
+                <span>{formatPlaybackTime(playback.duration)}</span>
+              </div>
+              {playback.error ? (
+                <p className="text-xs text-rose-600" role="alert">
+                  {playback.error}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
     </animated.article>

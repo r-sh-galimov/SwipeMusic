@@ -1,34 +1,56 @@
-import { createMockMusicSourceAdapter } from './adapters/mock'
+import { sourceManager } from './SourceManager'
 import type { MusicSourceAdapter } from './MusicSourceAdapter'
-import { musicSourceRegistry } from './registry'
+import {
+  musicSourceRegistry,
+  sourceRegistry,
+} from './registry'
 import type { FetchTracksParams, FetchTracksResult } from './types'
+import type { Track } from '../types/track'
+import {
+  bootstrapProviderPlugins,
+  pluginFromAdapter,
+  registerPlugin,
+} from '../sdk'
 
 let bootstrapped = false
 
-/** Регистрирует встроенные адаптеры. Вызывать один раз при старте. */
+/**
+ * Регистрирует встроенные адаптеры через SourceManager + Provider Plugin SDK.
+ */
 export function bootstrapMusicSources(): void {
   if (bootstrapped) {
     return
   }
 
-  musicSourceRegistry.register(createMockMusicSourceAdapter())
-  // Будущие адаптеры подключаются так же:
-  // musicSourceRegistry.register(createSpotifyAdapter(...))
-  // musicSourceRegistry.register(createYandexMusicAdapter(...))
-  // musicSourceRegistry.register(createLocalFolderAdapter(...))
-
-  musicSourceRegistry.setActive('mock')
+  sourceManager.bootstrap()
+  bootstrapProviderPlugins()
   bootstrapped = true
 }
 
+/**
+ * Подключение источника одной строкой:
+ * registerMusicSource(new ZaycevAdapter())
+ * Работает через PluginRegistry (plugin-first).
+ */
 export function registerMusicSource(adapter: MusicSourceAdapter): void {
   bootstrapMusicSources()
-  musicSourceRegistry.register(adapter)
+  registerPlugin(pluginFromAdapter(adapter))
 }
 
 export function setActiveMusicSource(sourceId: string): void {
   bootstrapMusicSources()
+  sourceManager.enableSource(sourceId)
   musicSourceRegistry.setActive(sourceId)
+}
+
+export function activateMusicSource(sourceId: string): void {
+  bootstrapMusicSources()
+  sourceManager.enableSource(sourceId)
+}
+
+export function deactivateMusicSource(sourceId: string): void {
+  bootstrapMusicSources()
+  sourceManager.disableSource(sourceId)
 }
 
 export function getActiveMusicSource(): MusicSourceAdapter {
@@ -38,10 +60,15 @@ export function getActiveMusicSource(): MusicSourceAdapter {
 
 export function listMusicSources(): MusicSourceAdapter[] {
   bootstrapMusicSources()
-  return musicSourceRegistry.list()
+  return sourceRegistry.list()
 }
 
-/** Единая точка получения треков для UI / store — без знания поставщика. */
+export function listActiveMusicSources(): MusicSourceAdapter[] {
+  bootstrapMusicSources()
+  return musicSourceRegistry.listActive()
+}
+
+/** Треки только от primary-источника (обратная совместимость). */
 export async function fetchTracksFromActiveSource(
   params?: FetchTracksParams,
 ): Promise<FetchTracksResult> {
@@ -56,7 +83,18 @@ export async function fetchTracksFromActiveSource(
   return source.fetchTracks(params)
 }
 
-export type { MusicSourceAdapter } from './MusicSourceAdapter'
+/**
+ * Треки со всех включённых источников (SourceManager).
+ * Дубликаты по Track.id отбрасываются.
+ */
+export async function fetchTracksFromActiveSources(
+  params?: FetchTracksParams,
+): Promise<FetchTracksResult> {
+  bootstrapMusicSources()
+  return sourceManager.fetchMergedTracks(params)
+}
+
+export type { MusicSourceAdapter, SearchResult } from './MusicSourceAdapter'
 export type {
   FetchTracksParams,
   FetchTracksResult,
@@ -65,8 +103,61 @@ export type {
   MusicSourceKind,
 } from './types'
 export { createTrack, createTrackId } from './normalizeTrack'
-export { musicSourceRegistry } from './registry'
+export {
+  musicSourceRegistry,
+  sourceRegistry,
+  MusicSourceNotActiveError,
+  MusicSourceNotFoundError,
+} from './registry'
+export {
+  sourceManager,
+  sourceTypeLabel,
+  normalizeSourceType,
+} from './SourceManager'
+export type {
+  SourceConfig,
+  SourceType,
+  SourceTypeInput,
+  CreateSourceInput,
+} from '../types/source'
+
 export { createMockMusicSourceAdapter } from './adapters/mock'
+export { SpotifyAdapter, createSpotifyAdapter } from './adapters/spotify'
+export {
+  YandexMusicAdapter,
+  createYandexMusicAdapter,
+} from './adapters/yandex-music'
+export { VKMusicAdapter, createVKMusicAdapter } from './adapters/vk-music'
+export { ZaycevAdapter, createZaycevAdapter } from './adapters/zaycev'
+export { ExampleAdapter, createExampleAdapter } from './adapters/example'
+export {
+  FileSystemMusicAdapter,
+  createLocalFolderAdapter,
+  createLocalFolderAdapterStub,
+  getFileSystemMusicAdapter,
+  LOCAL_AUDIO_EXTENSIONS,
+} from './adapters/local-folder'
+export type {
+  LocalAccessState,
+  LocalLibraryStats,
+  LocalScanProgress,
+} from './adapters/local-folder'
+export {
+  MyMusicSiteAdapter,
+  createMyMusicSiteAdapter,
+  createCustomWebsiteAdapter,
+  createWebSourceAdapterStub,
+} from './adapters/web'
 export { createOfficialApiAdapterStub } from './adapters/official-api'
-export { createLocalFolderAdapterStub } from './adapters/local-folder'
-export { createWebSourceAdapterStub } from './adapters/web'
+export { ApiMusicAdapter } from './adapters/ApiMusicAdapter'
+export { ScraperMusicAdapter } from './adapters/ScraperMusicAdapter'
+export {
+  BrowserHtmlFetcher,
+  BackendProxyHtmlFetcher,
+  BackendHtmlFetcher,
+  type HtmlFetcher,
+} from './scraping'
+
+export type { Track }
+
+export { resolvePlaybackUrl } from './resolvePlaybackUrl'

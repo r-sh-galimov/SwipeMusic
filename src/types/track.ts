@@ -6,11 +6,14 @@ export type Track = {
   title: string
   artist: string
   album?: string
+  genre?: string
+  year?: number
   durationMs?: number
   coverUrl?: string | null
   /** Заглушка / доминирующий цвет, если нет coverUrl */
   coverColor?: string
   previewUrl?: string | null
+  tags?: string[]
 }
 
 export type TrackSection = {
@@ -25,4 +28,5 @@ export type TrackSeed = {
   title: string
   artist: string
   coverColor: string
+  previewUrl?: string
 }
